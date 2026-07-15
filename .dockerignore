@@ -1,0 +1,36 @@
+# Version control
+.git
+.gitignore
+
+# Python virtualenvs / caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data & secrets (never bake into the image)
+config.yaml
+config.yaml.bak*
+sessions.json
+*_session.json
+*_token.json
+*.db
+*.db-*
+data/
+.env
+
+# Dev / test / scratch
+dev/
+test/
+/root/hdtest
+
+# Editor & OS cruft
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Logs
+*.log

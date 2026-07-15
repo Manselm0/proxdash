@@ -1,0 +1,2155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- iOS Safari tints its top chrome to this; black so it blends with the bar's
+     black top strip below. apple-* covers the standalone/home-screen case. -->
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Proxdash</title>
+<link rel="icon" href="/api/logo?theme=dark">
+<link rel="apple-touch-icon" href="/api/logo?theme=dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+// Ship every client error to the server so we can see exactly what fires on a
+// real device (message, stack, page, build, browser) instead of guessing.
+function _hdReport(o){
+  try{
+    o.page=location.pathname; o.build=(window._hdBuild||'?'); o.ua=navigator.userAgent;
+    fetch('/api/clientlog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(function(){});
+  }catch(e){}
+}
+window.onerror=function(msg,src,line,col,err){
+  _hdReport({type:'onerror',msg:String(msg),src:String(src||''),line:line,col:col,stack:(err&&err.stack)?String(err.stack):''});
+  var d=document.getElementById('hd-jserr');
+  if(d){
+    d.textContent='JS ERROR: '+msg+' (line '+line+')  — click to dismiss';
+    d.style.display='block'; d.style.cursor='pointer';
+    d.onclick=function(){d.style.display='none';};
+    // Auto-clear so a one-off/stale error doesn't leave a permanently stuck
+    // banner (it used to never hide → looked like the page was still broken).
+    clearTimeout(window._hdJsErrT);
+    window._hdJsErrT=setTimeout(function(){d.style.display='none';},10000);
+  }
+  return false;
+};
+window.addEventListener('unhandledrejection',function(ev){
+  var r=ev&&ev.reason;
+  _hdReport({type:'rejection',msg:String((r&&r.message)||r||''),stack:(r&&r.stack)?String(r.stack):''});
+});
+// Apply dark mode before render to avoid FOUC. Default: dark. Only light if explicitly opted out.
+(function(){try{if(localStorage.getItem('hd-dark')!=='0')document.documentElement.classList.add('dark');}catch(e){document.documentElement.classList.add('dark');}})();
+// Custom accent from a hex color (the Settings → Appearance color input).
+// Overrides the :root/html.dark --c-accent tokens via an injected <style> so
+// opacity formulas (rgba(var(--c-accent-rgb),…)) stay in tune. Persisted under
+// the ProxDash-specific key `proxdash-accent`; when unset, NO override is
+// injected and the #E57000 CSS default (Proxmox orange) stands.
+function _hexToRgb(hex){
+  hex = String(hex||'').replace('#','');
+  if (hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return null;
+  var n = parseInt(hex, 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+function applyAccentColor(hex){
+  if (!hex) return;
+  if (hex[0] !== '#') hex = '#' + hex;
+  var rgb = _hexToRgb(hex); if (!rgb) return;
+  var style = document.getElementById('hd-accent-style');
+  if (!style){ style = document.createElement('style'); style.id = 'hd-accent-style'; }
+  style.textContent =
+    ':root{--c-accent:'+hex+'!important;--c-accent-rgb:'+rgb.join(',')+'!important;}' +
+    'html.dark{--c-accent:'+hex+'!important;--c-accent-rgb:'+rgb.join(',')+'!important;}';
+  document.head.appendChild(style);
+  try { localStorage.setItem('proxdash-accent', hex); } catch(e){}
+  if (typeof _refreshChartsForTheme === 'function'){ try { _refreshChartsForTheme(); } catch(e){} }
+}
+// Clear the custom accent → drop the injected override so the #E57000 CSS token
+// (:root / html.dark) takes back over. Settings → Appearance "Reset" calls this.
+function resetAccentColor(){
+  try { localStorage.removeItem('proxdash-accent'); } catch(e){}
+  var style = document.getElementById('hd-accent-style');
+  if (style) style.textContent = '';
+  if (typeof _refreshChartsForTheme === 'function'){ try { _refreshChartsForTheme(); } catch(e){} }
+}
+// Default accent for a fresh install = the Proxmox-orange CSS token (#E57000).
+window.HD_DEFAULT_ACCENT = '#E57000';
+// Logo: /api/logo?theme=light|dark serves the uploaded custom logo for the
+// current theme (Settings → Appearance) and falls back to the bundled
+// ProxDash mark (light or dark variant) server-side. A browser-local URL
+// override (Settings → Logo URL) still wins over both.
+function _defaultLogoUrl(){
+  // Stamp the build id so each deploy mints a fresh URL — browser favicon
+  // caches are sticky and ignore href-only changes on revisits.
+  var v = window.__BUILD__ ? '&v=' + window.__BUILD__ : '';
+  return '/api/logo?theme=' + (document.documentElement.classList.contains('dark') ? 'dark' : 'light') + v;
+}
+function applyLogo(url){
+  var u = url || _defaultLogoUrl();
+  document.querySelectorAll('img[data-logo]').forEach(function(img){ img.src = u; });
+  var fav = document.querySelector('link[rel="icon"]'); if (fav) fav.href = u;
+  var atl = document.querySelector('link[rel="apple-touch-icon"]'); if (atl) atl.href = u;
+  try { if (url) localStorage.setItem('hd-logo', url); else localStorage.removeItem('hd-logo'); } catch(e){}
+}
+// Restore before first paint to avoid a flash. Only a hex stored under the
+// ProxDash key applies an override; otherwise the #E57000 CSS default stands
+// (no injected override), so any stale value from another app is ignored.
+(function(){try{
+  var col = localStorage.getItem('proxdash-accent');
+  if (col && _hexToRgb(col)) applyAccentColor(col);
+  var logo = localStorage.getItem('hd-logo');
+  if (logo) applyLogo(logo);
+  // Re-apply once the DOM exists: the sidebar <img data-logo> isn't parsed yet
+  // when this head script runs, and the default is theme-dependent.
+  document.addEventListener('DOMContentLoaded', function(){
+    applyLogo(localStorage.getItem('hd-logo') || '');
+  });
+}catch(e){}})();
+</script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/static/vendor/gsap.min.js"></script>
+<script src="/static/vendor/ScrollTrigger.min.js"></script>
+<style>
+/* ── Design tokens — exact match to TracEarr globals.css ── */
+:root {
+  /* Light: --background:0 0% 100%, --sidebar:0 0% 98%, --border:240 6% 90% */
+  --c-bg:#FFFFFF; --c-panel:#FAFAFA; --c-card:#F4F4F6; --c-border:#E4E4E7;
+  --c-sidebar-border:#E4E4E7;
+  /* Solid (not translucent) in light mode — backdrop-filter over a white page
+     renders a muddy gray. Dark mode keeps the frosted glass below. */
+  --c-panel-glass:#FFFFFF;
+  --c-text:#09090B; --c-muted:#71717A; --c-dim:#A1A1AA;
+  /* Proxmox orange #E57000 = hsl(29 100% 45%) = rgb(229,112,0) — ProxDash default accent */
+  --c-accent:#E57000; --c-accent-rgb:229,112,0;
+  /* Text/icon colour that sits ON the accent. Light-mode accents are dark
+     (L 38–50) → white reads; dark-mode accents are bright (L 50–65) → near-black. */
+  --c-accent-contrast:#FFFFFF;
+  /* Label/icon colour for the ACTIVE sidebar item, which sits on the solid
+     Proxmox-orange pill (#E57000). White fails contrast on orange, so this is a
+     near-black that reads ~6:1 in both light and dark (the pill is orange in
+     both). Separate from --c-accent-contrast so buttons/badges keep white. */
+  --c-nav-active-text:#1A1206;
+  /* --secondary: 240 5% 96% */
+  --c-hover:#F4F4F5; --c-bar-bg:#E4E4E7;
+  --c-shadow:0 1px 3px rgba(0,0,0,.05);
+  /* Unified hover glow — soft accent bloom only, NO ring/outline (near-symmetric
+     so it isn't clipped at the bottom of overflow-scroll carousels) */
+  --c-shadow-hover:0 2px 12px -5px rgba(var(--c-accent-rgb),.17), 0 0 6px -3px rgba(var(--c-accent-rgb),.10);
+  /* Motion curves (theme-independent). --ease-out: strong ease-out for entrances/
+     hovers; --ease-std: material standard for on-screen moves; --ease-drawer: iOS
+     drawer curve. Tokenized so timing is tuned in one place. */
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ease-std:cubic-bezier(.4,0,.2,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+}
+html.dark {
+  /* --background:240 10% 4%, --sidebar:240 6% 10%, --card:240 10% 4% (same as bg!) */
+  --c-bg:#000000; --c-panel:#18181B; --c-card:#0A0A0C; --c-border:#27272A;
+  --c-sidebar-border:rgba(255,255,255,.07);
+  --c-panel-glass:rgba(0,0,0,.4);
+  --c-text:#FAFAFA; --c-muted:#A1A1AA; --c-dim:#71717A;
+  /* Proxmox orange #E57000 = rgb(229,112,0) — ProxDash default accent (dark) */
+  --c-accent:#E57000; --c-accent-rgb:229,112,0;
+  --c-accent-contrast:#FFFFFF;
+  /* --accent/secondary: 240 4% 16% */
+  --c-hover:#27272A; --c-bar-bg:#27272A;
+  --c-shadow:0 0 0 1px #27272A;
+  /* Unified hover glow — soft accent bloom only, NO ring/outline (dark) */
+  --c-shadow-hover:0 2px 15px -5px rgba(var(--c-accent-rgb),.22), 0 0 7px -3px rgba(var(--c-accent-rgb),.14);
+}
+*, *::before, *::after { box-sizing: border-box; }
+/* html carries the theme background too: on macOS/iOS Safari the rubber-band
+   overscroll reveals the html layer — unstyled it flashes white behind the
+   dark UI. overscroll-behavior stops the viewport-level bounce + iOS
+   pull-to-refresh; inner scrollers keep their own (contained) bounce. */
+html { scroll-behavior: smooth; background: var(--c-bg); overscroll-behavior-y: none; }
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  overscroll-behavior-y: none;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background .25s ease, color .25s ease;
+}
+/* Scroll containers must not chain their overscroll to the viewport —
+   that chaining is what bounced the whole app when pulling past the edge. */
+#pages-root, #stor-drawer-body, #vm-drawer-body { overscroll-behavior-y: contain; }
+/* Brand wordmark: Exo 2 (vendored, OFL) — the closest free face to the squared
+   geometric sans of the Proxmox wordmark. Used ONLY for the product name. */
+@font-face {
+  font-family: 'Exo 2';
+  font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/static/vendor/fonts/exo2-600-latin.woff2') format('woff2');
+}
+#nav-title, .brand-wordmark { font-family: 'Exo 2', 'Inter', system-ui, sans-serif; text-transform: uppercase; }
+
+/* ── Scrollbar (thin, neutral) ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--c-border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--c-dim); background-clip: content-box; }
+
+/* ── Animations ── */
+@keyframes fade-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+@keyframes fade-in-up { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:none} }
+@keyframes scale-in { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
+/* First-appearance stagger for card grids — applied per-child with a capped
+   delay by _staggerInPage on first page show. `both` holds opacity:0 through the
+   delay so the cascade reads cleanly. Reduced-motion: not applied (JS opts out). */
+@keyframes stagger-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+/* fill-mode must be backwards, NOT both/forwards: a filled entrance animation's
+   final keyframe (transform:none) permanently overrides the :hover/:active
+   transition transforms, killing the card hover-lift + press-dip. backwards
+   still hides the card during its stagger delay, then releases the property. */
+.stagger-in { animation: stagger-in .34s var(--ease-out) backwards; }
+@keyframes slide-in-right { from{opacity:0;transform:translateX(14px)} to{opacity:1;transform:none} }
+@keyframes pulse-live { 0%,100%{opacity:1} 50%{opacity:.35} }
+@keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+@keyframes glow-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(var(--c-accent-rgb),.4); }
+  50%     { box-shadow: 0 0 0 6px rgba(var(--c-accent-rgb),0); }
+}
+
+/* Page-load placeholder — shown instantly when navigating to a page whose
+   fragment is still fetching (so nav never stalls on a slow connection). */
+@keyframes hd-spin { to { transform: rotate(360deg); } }
+.hd-page-loading {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:16px; min-height:55vh; text-align:center; padding:40px 20px;
+  animation: fade-in .2s ease;
+}
+.hd-page-loading .ring {
+  width:32px; height:32px; border-radius:50%;
+  border:3px solid var(--c-border); border-top-color:var(--c-accent);
+  animation: hd-spin .8s linear infinite;
+}
+.hd-page-loading .quip { color:var(--c-muted); font-size:14px; font-weight:500; letter-spacing:.01em; }
+/* Loading spinner reuses the Tools page's orbiting-satellite motif (planet +
+   satellite), scaled up and CSS-driven, so every "waiting" moment is cohesive.
+   Inherits the .orb-scene .planet/.sat gradients + glow; we just resize/orbit. */
+@keyframes hd-orbit { to { transform: rotate(360deg); } }
+.hd-page-loading .orb-scene { width:48px; height:48px; }
+.hd-page-loading .orb-scene .planet { left:24px; top:24px; width:15px; height:15px; margin:-7.5px 0 0 -7.5px; }
+.hd-page-loading .orb-scene .spin { left:24px; top:24px; animation: hd-orbit 1.5s linear infinite; }
+.hd-page-loading .orb-scene .sat { left:-4px; top:-24px; width:9px; height:9px; }
+
+.anim-fade-in { animation: fade-in .3s ease-out both; }
+.anim-fade-in-up { animation: fade-in-up .4s ease-out both; }
+.anim-scale-in { animation: scale-in .2s ease-out both; }
+.anim-slide-in { animation: slide-in-right .3s ease-out both; }
+.dot-live { animation: pulse-live 2s infinite; }
+
+/* Stagger children */
+.stagger > * { animation: fade-in-up .35s ease-out both; }
+.stagger > *:nth-child(1){animation-delay:0ms}
+.stagger > *:nth-child(2){animation-delay:35ms}
+.stagger > *:nth-child(3){animation-delay:70ms}
+.stagger > *:nth-child(4){animation-delay:105ms}
+.stagger > *:nth-child(5){animation-delay:140ms}
+.stagger > *:nth-child(6){animation-delay:175ms}
+.stagger > *:nth-child(7){animation-delay:210ms}
+.stagger > *:nth-child(8){animation-delay:245ms}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
+}
+
+/* Page visibility — instant switch (no fade) so navigation feels snappy.
+   Page HTML is prefetched in the background (see _prefetchPages), so there's
+   no per-click fetch either. The graphs inside still animate in (LR sweep). */
+.page { display: none; }
+.page.active { display: block; }
+
+/* Scroll containers */
+.scroll-y { max-height: 240px; overflow-y: auto; }
+/* Shared search field. Icon sits left, clear-✕ right. */
+.hd-search { height:34px; width:100%; box-sizing:border-box; padding:0 36px; font-size:13px; border-radius:8px; border:1px solid var(--c-border); background:var(--c-card); color:var(--c-text); font-family:inherit; outline:none; -webkit-appearance:none; appearance:none; transition:border-color .12s ease, box-shadow .12s ease; }
+.hd-search::-webkit-search-cancel-button, .hd-search::-webkit-search-decoration { -webkit-appearance:none; appearance:none; display:none; }
+.hd-search:focus { border-color:var(--c-accent); box-shadow:0 0 0 2px rgba(var(--c-accent-rgb),.3); }
+.hd-search-wrap { position:relative; display:flex; align-items:center; }
+.hd-search-wrap > svg.hd-search-ico { position:absolute; left:12px; pointer-events:none; color:var(--c-muted); }
+.hd-search-wrap > .hd-search-clear { position:absolute; right:10px; border:none; background:transparent; color:var(--c-muted); cursor:pointer; display:none; align-items:center; padding:0; }
+.hd-search-wrap > input:not(:placeholder-shown) ~ .hd-search-clear { display:inline-flex; }
+
+/* ══ Search-toolbar component ═════════════════════════════════════════════════
+   The standardized search/filter toolbar (the Activity "history search" pattern).
+   Copy-paste skeleton — every search bar should look like this:
+
+     <div class="hd-toolbar">
+       <div class="hd-toolbar-row">
+         <!-- optional segmented pills (.hist-range): period / status -->
+         <div class="hd-search-wrap" style="flex:1;min-width:200px;max-width:400px">
+           <svg class="hd-search-ico" .../>
+           <input class="hd-search" type="search" placeholder="…" oninput="…">
+           <button class="hd-search-clear">✕</button>
+         </div>
+         <!-- optional dropdown triggers -->
+         <div style="position:relative">
+           <button class="hd-tbtn">{icon} Label <span class="hd-tbtn-badge">N</span> {chevron}</button>
+           <div class="hd-menu" style="width:240px">
+             <div class="hd-menu-hdr">Section</div>
+             <button class="hd-menu-item">…</button>
+           </div>
+         </div>
+       </div>
+       <!-- active-filter "tabs" -->
+       <div class="hd-chips"><span class="hd-chip">Label: value ✕</span></div>
+     </div>
+   ════════════════════════════════════════════════════════════════════════════ */
+.hd-toolbar { background:var(--c-card); border:1px solid var(--c-border); border-radius:8px; box-shadow:var(--c-shadow); padding:16px; display:flex; flex-direction:column; gap:12px; }
+.hd-toolbar-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.hd-tbtn { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 13px; border-radius:8px; border:1px solid var(--c-border); background:var(--c-card); color:var(--c-text); font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap; transition:background-color .12s ease, border-color .12s ease, transform .13s ease-out; }
+.hd-tbtn:hover { background:var(--c-hover); }
+.hd-tbtn:active { transform:scale(.97); }
+.hd-tbtn-badge { margin-left:4px; height:20px; min-width:20px; padding:0 6px; border-radius:9999px; font-size:10px; background:var(--c-hover); color:var(--c-muted); display:inline-flex; align-items:center; justify-content:center; }
+.hd-tbtn-chev { opacity:.5; display:inline-flex; }
+/* No open animation on the panel itself: the menu re-renders on every multi-select
+   pick, so an @starting-style scale-fade would re-fire and bounce the whole dropdown.
+   The panel appears instantly; only the pressed .hd-menu-item dips (:active below). */
+/* Shared icon close button (drawers, modals) — replaces the per-instance inline
+   style + onmouseover/onmouseout hover swap, and adds the missing :active dip. */
+.hd-close { width:28px; height:28px; border-radius:6px; border:none; background:transparent; color:var(--c-muted); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; font-family:inherit; transition:background-color .12s ease, color .12s ease, transform .13s var(--ease-out); }
+.hd-close:hover { background:var(--c-hover); color:var(--c-text); }
+.hd-close:active { transform:scale(.9); }
+/* Shared table-row hover (Activity history, Backups) — accent-tint highlight + press dip, neutralized on touch. */
+.hd-trow { transition:background-color .15s ease; }
+.hd-trow:hover { background:rgba(var(--c-accent-rgb),.05); }
+.hd-trow:active { background:rgba(var(--c-accent-rgb),.09); }
+@media (hover:none){ .hd-trow:hover:not(:active){ background:transparent; } }
+.hd-menu { position:absolute; right:0; top:calc(100% + 4px); min-width:200px; background:var(--c-card); border:1px solid var(--c-border); border-radius:12px; box-shadow:var(--c-shadow-hover); padding:6px; z-index:30; }
+.hd-menu-hdr { font-size:11px; font-weight:600; color:var(--c-muted); padding:6px 8px; }
+.hd-menu-item { display:flex; align-items:center; gap:8px; width:100%; padding:6px 8px; border:none; background:transparent; color:var(--c-text); font-size:13px; text-align:left; cursor:pointer; border-radius:4px; font-family:inherit; transition:background-color .12s ease, transform .1s ease; }
+.hd-menu-item:hover { background:var(--c-hover); }
+.hd-menu-item:active { transform:scale(.98); }
+.hd-menu-item.sel { font-weight:600; }
+.hd-menu-item .ck { margin-left:auto; width:14px; height:14px; color:var(--c-accent); opacity:0; }
+.hd-menu-item.sel .ck { opacity:1; }
+.hd-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.hd-chip { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 6px 0 10px; border-radius:9999px; background:var(--c-hover); border:1px solid var(--c-border); font-size:12px; color:var(--c-text); font-weight:normal; }
+
+/* Health timeline tick */
+.htick { width: 5px; height: 18px; border-radius: 2px; flex-shrink: 0; display: inline-block; }
+/* Health console: Active Issues rows + Incident timeline */
+.health-iss { display: flex; align-items: center; gap: 10px; padding: 11px 16px; cursor: pointer; }
+.health-iss + .health-iss { border-top: 1px solid var(--c-border); }
+.health-iss:hover { background: var(--c-hover); }
+.health-iss-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.health-iss-who { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.health-iss-what { font-size: 12.5px; color: var(--c-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-iss-go { font-size: 10.5px; font-weight: 600; color: var(--c-accent); white-space: nowrap; flex-shrink: 0; }
+.health-tl { display: flex; flex-direction: column; }
+.health-tl-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; font-size: 12px; }
+.health-tl-row + .health-tl-row { border-top: 1px solid var(--c-border); }
+.health-tl-row time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--c-dim); width: 96px; flex-shrink: 0; }
+.health-tl-tag { font-size: 8.5px; font-weight: 700; letter-spacing: .05em; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+.health-tl-tag.t-ok { background: rgba(34,197,94,.14); color: #4ADE80; }
+.health-tl-tag.t-fail { background: rgba(239,68,68,.16); color: #FF8A80; }
+.health-tl-tag.t-run { background: var(--c-hover); color: var(--c-muted); }
+.health-tl-msg { color: var(--c-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width:767px){ .health-tl-row time { width: 68px; } .health-iss-go { display: none; } }
+
+/* ── Health heatmap (services × hour grid) ── */
+.hm-wrap { display: flex; flex-direction: column; gap: 4px; min-width: max-content; }
+.hm-row { display: flex; align-items: center; gap: 8px; }
+.hm-label {
+  width: 130px; min-width: 130px; flex-shrink: 0;
+  font-size: 11px; color: var(--c-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hm-cells { display: flex; gap: 2px; }
+.hm-cell { width: 18px; height: 18px; border-radius: 2px; transition: transform .12s ease; cursor: default; }
+.hm-cell:hover { transform: scale(1.4); z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.hm-row.hm-header .hm-label { color: var(--c-dim); font-weight: 600; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; }
+.hm-hour { width: 18px; font-size: 8px; color: var(--c-dim); text-align: center; font-variant-numeric: tabular-nums; }
+/* Uptime heatmap scrolls horizontally (.hm-wrap is min-width:max-content) so it
+   never clips on mobile or for wide windows (90d). */
+#hm-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Card base ── */
+.hd-card {
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  box-shadow: var(--c-shadow);
+  transition: transform .35s var(--ease-out), box-shadow .35s var(--ease-out), filter .35s ease, border-color .3s ease;
+}
+
+/* Unified hover/glow for interactive cards: gentle scale + accent glow + faint
+   brightness on a weighty ease-out curve. */
+.card-hover { cursor: pointer; will-change: transform; }
+.card-hover:hover {
+  transform: scale(1.02);
+  box-shadow: var(--c-shadow-hover);
+  filter: brightness(1.025);
+}
+.card-hover:active { transform: scale(.98); transition-duration: .12s; }
+
+/* Press feedback (Emil): every pressable control dips slightly on :active so a
+   click/tap feels instantly acknowledged. Subtle (0.97–0.98) and snappy. The
+   targeted controls all carry `transform` in their transition (added above). */
+.nav-item:active, .hist-btn:active, .btn-ghost:active, .btn-accent-soft:active,
+.s-btn:active, .dm-btn:active, [data-ta-dropdown] > button:active { transform: scale(.97); }
+.stat-tile:active, .kpi-card:active { transform: scale(.98); }
+[data-ta-dropdown] > button { transition: background-color .15s ease, border-color .15s ease, transform .13s ease-out; }
+
+/* Touch hover-stick fix (Emil): touch devices fire :hover on tap and leave it
+   stuck until you tap elsewhere — so a tapped card/button stays lifted. On
+   no-hover pointers, neutralize the hover lift/brightness. `:not(:active)`
+   keeps the press feedback (scale .97) intact during the tap itself, removing
+   only the stuck state after release. */
+@media (hover: none) {
+  .card-hover:hover:not(:active), .hm-cell:hover:not(:active),
+  .stor-cell[data-stor]:hover:not(:active),
+  .accent-swatch:hover:not(:active), .btn-primary:hover:not(:active),
+  .dm-btn:hover:not(:active), .stat-tile:hover:not(:active),
+  .kpi-card:hover:not(:active) {
+    transform: none;
+    filter: none;
+  }
+}
+
+/* Status-change flash — entity cards pulse an accent ring when their state
+   actually changes (started/stopped). Hooked from _renderEntityGrid; the
+   reduced-motion block above neutralises it. */
+@keyframes ec-flash {
+  0%   { box-shadow: 0 0 0 2px rgba(var(--c-accent-rgb),.6), var(--c-shadow); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--c-accent-rgb),0), var(--c-shadow); }
+}
+.ec-flash { animation: ec-flash 1s ease-out; }
+
+/* Opt-in: add accent border on hover (Tracearr `.card-hover-border`) */
+.card-hover-border:hover { border-color: rgba(var(--c-accent-rgb), .5) !important; }
+
+/* Clips the off-screen (parked) slide-in drawers so their off-viewport box can't
+   be scrolled to as empty space on iOS. `transform` makes this the containing
+   block for the fixed drawers inside (so they still pin to the viewport), and
+   overflow:hidden trims anything past the right edge. pointer-events:none lets
+   page taps through; the overlays + drawers below set their own pointer-events. */
+#drawer-clip {
+  position:fixed; inset:0; z-index:200; overflow:hidden;
+  pointer-events:none; transform:translateZ(0);
+}
+#drawer-clip > * { pointer-events:auto; }
+/* Lock background scroll while any slide-in drawer is open — otherwise the page
+   behind the overlay still scrolls under your finger. One :has() rule covers
+   every drawer (they all toggle .open), so no per-drawer JS is needed. */
+html:has(#stor-drawer.open),
+html:has(#vm-drawer.open) { overflow:hidden; }
+/* Tracearr-style drawer: Section cards with circular icon headers. */
+.sd-card {
+  border:1px solid var(--c-border); border-radius:8px; padding:12px;
+  background:var(--c-card);
+}
+.sd-card + .sd-card { margin-top:12px; }
+.sd-card-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:8px; font-size:14px; font-weight:500; color:var(--c-text);
+}
+.sd-card-hdr-l { display:flex; align-items:center; gap:8px; }
+.sd-card-ico {
+  width:24px; height:24px; border-radius:9999px;
+  background:rgba(var(--c-accent-rgb),.1);
+  display:inline-flex; align-items:center; justify-content:center;
+  color:var(--c-accent); flex-shrink:0;
+}
+.sd-row { display:flex; align-items:center; justify-content:space-between; font-size:14px; padding:3px 0; }
+.sd-row + .sd-row { padding-top:3px; }
+.sd-row-k { color:var(--c-muted); }
+.sd-row-v { color:var(--c-text); text-align:right; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sd-row-v.mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+/* Legacy compact key/value rows — kept for any consumers we haven't migrated yet. */
+.sd-kv { display:flex; justify-content:space-between; align-items:center; padding:6px 0; }
+.sd-key { font-size:11px; color:var(--c-muted); text-transform:uppercase; letter-spacing:.06em; }
+.sd-val { font-size:13px; font-weight:500; text-align:right; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sd-section { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--c-dim); margin:16px 0 4px; }
+
+/* ── Sidebar menu buttons — Tracearr style ── */
+[data-sidebar="menu-button"],
+[data-sidebar="menu-sub-button"] {
+  display: flex; align-items: center; gap: 8px;
+  overflow: hidden; border-radius: 8px;
+  width: 100%; text-align: left;
+  font-size: 14px; font-weight: 500;
+  color: var(--c-text);
+  cursor: pointer; background: none; border: none;
+  text-decoration: none; user-select: none;
+  transition: background 150ms ease, color 150ms ease;
+}
+[data-sidebar="menu-button"] {
+  padding: 0 8px 0 14px; height: 36px;   /* expanded: icon left-aligned, label follows. In the rail it glides to the centre (see rail overrides). */
+  font-family: inherit;
+  transition: background-color .18s ease, box-shadow .18s ease, transform .13s var(--ease-out), padding .28s var(--ease-drawer);
+}
+[data-sidebar="menu-sub-button"] {
+  height: 32px; padding: 0 8px;
+  font-family: inherit;
+  -webkit-translate: -1px 0; translate: -1px 0;
+  transition: background-color .18s ease, box-shadow .18s ease, transform .13s var(--ease-out);
+}
+/* Press feedback — the sidebar rows were the only pressables missing it. The
+   independent `translate` on sub-buttons composes with this `transform`. */
+[data-sidebar="menu-button"]:active,
+[data-sidebar="menu-sub-button"]:active { transform: scale(.97); }
+[data-sidebar="menu-button"] > svg,
+[data-sidebar="menu-sub-button"] > svg {
+  flex-shrink: 0; width: 16px; height: 16px;
+}
+/* Sidebar icon motion. A single class is toggled by the interaction layer below,
+   while each pictogram gets a tiny motion that reinforces what it represents.
+   The animations are deliberately short and settle back to the exact resting
+   geometry, so repeated navigation never leaves an icon visually out of place. */
+.nav-ico { overflow: visible; transform-box: fill-box; transform-origin: center; }
+.nav-ico > * { transform-box: fill-box; transform-origin: center; }
+.nav-icon-run .nav-ico { animation: nav-ico-lift .52s cubic-bezier(.2,.8,.2,1); }
+
+/* Overview: the four dashboard tiles arrive in reading order. */
+.nav-icon-run [data-nav-icon="overview"] .nav-ico__tile { animation: nav-tile-pop .38s cubic-bezier(.2,.9,.2,1.25) both; }
+.nav-icon-run [data-nav-icon="overview"] .nav-ico__tile:nth-of-type(2) { animation-delay: .035s; }
+.nav-icon-run [data-nav-icon="overview"] .nav-ico__tile:nth-of-type(3) { animation-delay: .07s; }
+.nav-icon-run [data-nav-icon="overview"] .nav-ico__tile:nth-of-type(4) { animation-delay: .105s; }
+
+/* Compute: the processor core wakes and its pins spark outward. */
+.nav-icon-run [data-nav-icon="compute"] .nav-ico__frame { animation: nav-frame-breathe .48s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="compute"] .nav-ico__core { animation: nav-core-pulse .5s cubic-bezier(.2,.9,.2,1); }
+.nav-icon-run [data-nav-icon="compute"] .nav-ico__pin { animation: nav-pin-spark .3s ease-out both; }
+.nav-icon-run [data-nav-icon="compute"] .nav-ico__pin:nth-of-type(2n) { animation-delay: .055s; }
+.nav-icon-run [data-nav-icon="compute"] .nav-ico__pin:nth-of-type(3n) { animation-delay: .1s; }
+
+/* Storage: the chassis settles into place and its activity lights blink. */
+.nav-icon-run [data-nav-icon="storage"] .nav-ico__seam { animation: nav-storage-seam .44s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="storage"] .nav-ico__body { animation: nav-storage-body .46s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="storage"] .nav-ico__led { animation: nav-led-blink .52s ease-out both; }
+.nav-icon-run [data-nav-icon="storage"] .nav-ico__led:last-child { animation-delay: .09s; }
+
+/* Network and topology: links grow first, then their nodes acknowledge them. */
+.nav-icon-run [data-nav-icon="network"] .nav-ico__link,
+.nav-icon-run [data-nav-icon="topology"] .nav-ico__link { animation: nav-link-grow .42s cubic-bezier(.2,.8,.2,1) both; }
+.nav-icon-run [data-nav-icon="network"] .nav-ico__node,
+.nav-icon-run [data-nav-icon="topology"] .nav-ico__node { animation: nav-node-pop .4s cubic-bezier(.2,.9,.2,1.2) both; }
+.nav-icon-run [data-nav-icon="network"] .nav-ico__node:nth-of-type(2),
+.nav-icon-run [data-nav-icon="topology"] .nav-ico__node:nth-of-type(2) { animation-delay: .055s; }
+.nav-icon-run [data-nav-icon="network"] .nav-ico__node:nth-of-type(3),
+.nav-icon-run [data-nav-icon="topology"] .nav-ico__node:nth-of-type(3) { animation-delay: .1s; }
+
+/* Backups: the archive lid lifts, closes, and the handle settles. */
+.nav-icon-run [data-nav-icon="backups"] .nav-ico__body { animation: nav-archive-body .5s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="backups"] .nav-ico__lid { animation: nav-archive-lid .52s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="backups"] .nav-ico__handle { animation: nav-handle-pulse .48s ease-out .07s both; }
+
+/* Health: draw one clean monitor sweep. */
+.nav-icon-run [data-nav-icon="health"] .nav-ico__wave { animation: nav-heartbeat-draw .62s cubic-bezier(.35,0,.2,1); }
+
+/* Security: the shield lands, then the check is drawn inside it. */
+.nav-icon-run [data-nav-icon="security"] .nav-ico__shield { animation: nav-shield-settle .5s cubic-bezier(.2,.9,.2,1); }
+.nav-icon-run [data-nav-icon="security"] .nav-ico__check { animation: nav-check-draw .42s ease-out .12s both; }
+
+/* Tools, assistant, and settings each use a restrained mechanical gesture. */
+.nav-icon-run [data-nav-icon="tools"] .nav-ico__tool { animation: nav-wrench-turn .55s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="tars"] .nav-ico__panel { animation: nav-panel-settle .46s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="tars"] .nav-ico__scan { animation: nav-scan-line .4s cubic-bezier(.2,.8,.2,1) both; }
+.nav-icon-run [data-nav-icon="tars"] .nav-ico__scan:nth-of-type(2) { animation-delay: .055s; }
+.nav-icon-run [data-nav-icon="tars"] .nav-ico__scan:nth-of-type(3) { animation-delay: .11s; }
+.nav-icon-run [data-nav-icon="settings"] .nav-ico__gear { animation: nav-gear-turn .58s cubic-bezier(.2,.8,.2,1); }
+.nav-icon-run [data-nav-icon="settings"] .nav-ico__hub { animation: nav-hub-pulse .48s cubic-bezier(.2,.9,.2,1); }
+
+@keyframes nav-ico-lift {
+  0%,100% { transform: translateY(0) scale(1); }
+  38% { transform: translateY(-1px) scale(1.055); }
+  72% { transform: translateY(0) scale(.985); }
+}
+@keyframes nav-tile-pop { 0%{opacity:.35;transform:scale(.62)} 62%{opacity:1;transform:scale(1.14)} 100%{opacity:1;transform:scale(1)} }
+@keyframes nav-frame-breathe { 0%,100%{transform:scale(1)} 45%{transform:scale(.91)} 72%{transform:scale(1.04)} }
+@keyframes nav-core-pulse { 0%,100%{transform:scale(1)} 42%{transform:scale(.65) rotate(-8deg)} 70%{transform:scale(1.18) rotate(3deg)} }
+@keyframes nav-pin-spark { 0%{opacity:.2;transform:scale(.15)} 65%{opacity:1;transform:scale(1.25)} 100%{opacity:1;transform:scale(1)} }
+@keyframes nav-storage-seam { 0%,100%{transform:translateY(0)} 45%{transform:translateY(-2px)} 72%{transform:translateY(.5px)} }
+@keyframes nav-storage-body { 0%,100%{transform:scaleY(1)} 42%{transform:scaleY(.88)} 72%{transform:scaleY(1.04)} }
+@keyframes nav-led-blink { 0%,38%{opacity:.15} 55%{opacity:1} 70%{opacity:.25} 100%{opacity:1} }
+@keyframes nav-link-grow { 0%{opacity:.15;transform:scale(.1)} 68%{opacity:1;transform:scale(1.08)} 100%{opacity:1;transform:scale(1)} }
+@keyframes nav-node-pop { 0%{opacity:.35;transform:scale(.62)} 66%{opacity:1;transform:scale(1.16)} 100%{opacity:1;transform:scale(1)} }
+@keyframes nav-archive-body { 0%,100%{transform:scaleY(1)} 42%{transform:scaleY(.9)} 72%{transform:scaleY(1.03)} }
+@keyframes nav-archive-lid { 0%,100%{transform:translateY(0)} 42%{transform:translateY(-3px) rotate(-2deg)} 74%{transform:translateY(.5px)} }
+@keyframes nav-handle-pulse { 0%{opacity:.3;transform:scaleX(.35)} 68%{opacity:1;transform:scaleX(1.18)} 100%{opacity:1;transform:scaleX(1)} }
+@keyframes nav-heartbeat-draw { 0%{opacity:.25;stroke-dasharray:1;stroke-dashoffset:1} 75%{opacity:1} 100%{opacity:1;stroke-dasharray:1;stroke-dashoffset:0} }
+@keyframes nav-shield-settle { 0%,100%{transform:scale(1)} 40%{transform:scale(.82)} 70%{transform:scale(1.08)} }
+@keyframes nav-check-draw { 0%{opacity:0;stroke-dasharray:1;stroke-dashoffset:1} 100%{opacity:1;stroke-dasharray:1;stroke-dashoffset:0} }
+@keyframes nav-wrench-turn { 0%,100%{transform:rotate(0)} 40%{transform:rotate(-16deg)} 72%{transform:rotate(7deg)} }
+@keyframes nav-panel-settle { 0%,100%{transform:scaleY(1)} 42%{transform:scaleY(.88)} 72%{transform:scaleY(1.04)} }
+@keyframes nav-scan-line { 0%{opacity:.2;transform:translateX(-2px) scaleX(.25)} 70%{opacity:1;transform:translateX(.5px) scaleX(1.08)} 100%{opacity:1;transform:translateX(0) scaleX(1)} }
+@keyframes nav-gear-turn { 0%,100%{transform:rotate(0)} 48%{transform:rotate(38deg)} 76%{transform:rotate(31deg)} }
+@keyframes nav-hub-pulse { 0%,100%{transform:scale(1)} 45%{transform:scale(.66)} 72%{transform:scale(1.16)} }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-icon-run .nav-ico,
+  .nav-icon-run .nav-ico > * { animation: none !important; }
+}
+[data-sidebar="menu-button"]:hover,
+[data-sidebar="menu-sub-button"]:hover {
+  background: var(--c-hover);
+  color: var(--c-text);
+}
+/* Active — refined solid (demo variant C): the bold accent fill, softened with a
+   subtle vertical gradient + a soft accent shadow so it reads as a raised pill
+   rather than a flat saturated bar. Icons inherit currentColor (accent-contrast). */
+[data-sidebar="menu-button"][data-active="true"],
+[data-sidebar="menu-sub-button"][data-active="true"] {
+  background: linear-gradient(180deg, rgba(var(--c-accent-rgb),1), rgba(var(--c-accent-rgb),.86));
+  color: var(--c-nav-active-text);
+  font-weight: 600;
+  box-shadow: 0 4px 14px -4px rgba(var(--c-accent-rgb),.5);
+}
+[data-sidebar="menu-button"][data-active="true"]:hover,
+[data-sidebar="menu-sub-button"][data-active="true"]:hover {
+  background: linear-gradient(180deg, rgba(var(--c-accent-rgb),1), rgba(var(--c-accent-rgb),.86));
+  color: var(--c-nav-active-text);
+}
+
+/* Collapsible open — trigger stays themed */
+[data-slot="collapsible"][data-state="open"] > [data-slot="sidebar-menu-item"] > [data-slot="collapsible-trigger"],
+[data-slot="collapsible"][data-state="open"] > li > [data-slot="collapsible-trigger"] {
+  color: var(--c-text);
+}
+
+/* Chevron — muted color, rotates on open */
+[data-sidebar="menu-button"] .nav-chevron,
+[data-slot="collapsible-trigger"] .nav-chevron {
+  margin-left: auto; flex-shrink: 0;
+  transition: transform .34s var(--ease-out), opacity .15s ease;
+  color: var(--c-muted);
+  opacity: 0.7;
+  width: 14px; height: 14px;
+}
+[data-slot="collapsible"][data-state="open"] .nav-chevron {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+/* Sub-menu — Tracearr border-l guide line, left-indent only. The line is
+   centered under the PARENT group's icon: menu-button pads 14px + 16px icon
+   → icon center 22px, so the 1px line starts at 21.5px. */
+[data-sidebar="menu-sub"] {
+  display: flex; flex-direction: column; gap: 4px;
+  list-style: none; padding: 2px 0 2px 10px;
+  margin: 0 0 0 21.5px;
+  border-left: 1px solid var(--c-border);
+}
+
+/* Collapsible content — animated expand/collapse (max-height + fade, weighty
+   ease-out to match the global hover curve). Always in the DOM so it can animate
+   both directions; overflow-clipped + non-interactive while collapsed. */
+[data-slot="collapsible-content"] {
+  display: block;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: max-height .34s var(--ease-out), opacity .24s ease, transform .34s var(--ease-out);
+}
+[data-slot="collapsible"][data-state="open"] [data-slot="collapsible-content"] {
+  max-height: 600px;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* ── Icon-only rail mode (desktop minimized sidebar) ── */
+#main-wrap { transition: margin-left .28s var(--ease-drawer); }
+#sidebar.rail #nav-title { opacity: 0; }   /* fade (not display:none) so the brand height never changes — stops the nav scooting up */
+#sidebar #sidebar-brand { transition: padding .28s var(--ease-drawer); }
+#sidebar.rail #sidebar-brand { padding-left: 13px; padding-right: 13px; }   /* 13 + 11(½ logo) = 24 = rail centre */
+/* Rail: labels + chevron fade; the icon glides to the rail centre (see the symmetry model below). */
+#sidebar [data-sidebar="menu-button"] > span { transition: opacity .15s ease; white-space: nowrap; }
+#sidebar.rail [data-sidebar="menu-button"] > span,
+#sidebar.rail .nav-chevron { opacity: 0; }
+/* hide the nav scrollbar in the narrow rail (a classic scrollbar would dominate it) */
+#sidebar.rail [role="navigation"] { scrollbar-width: none; }
+#sidebar.rail [role="navigation"]::-webkit-scrollbar { width: 0; height: 0; display: none; }
+/* groups never expand inline in the rail — sub-pages live in the flyout */
+#sidebar.rail [data-slot="collapsible-content"] { display: none; }
+/* SYMMETRY MODEL (the whole point): every button is centred in the sidebar because the
+   group's horizontal padding is symmetric, and the highlight ::before is inset by an equal
+   amount on both sides — so the highlight stays centred in the rail at EVERY frame. In the
+   rail we (a) drop the group's horizontal padding so each button spans the full 48px width,
+   (b) re-centre the icon in the button (it glides from its expanded left spot), and (c) the
+   ::before shrinks with the button into a centred 36px square. Highlight centred in the rail,
+   icon centred in the highlight — guaranteed by symmetry, not by hand-tuned offsets. */
+#sidebar [data-slot="sidebar-group"] { transition: padding .28s var(--ease-drawer); }
+#sidebar.rail [data-slot="sidebar-group"] { padding-left: 0; padding-right: 0; }
+#sidebar.rail [data-sidebar="menu-button"] { padding-left: 16px; padding-right: 16px; }   /* 16 + 8(½ icon) = 24 = rail centre */
+#sidebar [data-sidebar="menu-button"] { position: relative; background: transparent !important; box-shadow: none !important; }
+#sidebar [data-sidebar="menu-button"] > svg,
+#sidebar [data-sidebar="menu-button"] > span { position: relative; z-index: 1; }
+#sidebar [data-sidebar="menu-button"]::before {
+  content: ""; position: absolute; top: 50%; left: 4px; right: 4px; transform: translateY(-50%);
+  height: 34px; border-radius: 10px; z-index: 0; background: transparent;
+  transition: left .28s var(--ease-drawer), right .28s var(--ease-drawer), background .15s ease;
+}
+#sidebar.rail [data-sidebar="menu-button"]::before { left: 6px; right: 6px; }   /* 48 − 6 − 6 = 36px square, centred */
+#sidebar [data-sidebar="menu-button"]:hover::before { background: var(--c-hover); }
+#sidebar [data-sidebar="menu-button"][data-active="true"]::before {
+  background: linear-gradient(180deg, rgba(var(--c-accent-rgb),1), rgba(var(--c-accent-rgb),.86));
+  box-shadow: 0 4px 14px -4px rgba(var(--c-accent-rgb),.5);
+}
+/* group trigger gets the accent highlight only in the rail (where it stands in for its active sub-page) */
+#sidebar.rail [data-slot="collapsible-trigger"][data-group-active="true"]::before {
+  background: linear-gradient(180deg, rgba(var(--c-accent-rgb),1), rgba(var(--c-accent-rgb),.86));
+  box-shadow: 0 4px 14px -4px rgba(var(--c-accent-rgb),.5);
+}
+#sidebar.rail [data-slot="collapsible-trigger"][data-group-active="true"] { color: var(--c-nav-active-text); font-weight: 600; }
+/* footer: icons only in the rail */
+#sidebar.rail #sidebar-footer { align-items: center; padding-left: 0; padding-right: 0; gap: 8px; }
+#sidebar.rail #sidebar-footer #auth-username,
+#sidebar.rail #sidebar-footer #ws-label,
+#sidebar.rail #sidebar-footer #last-updated { display: none; }
+#sidebar.rail #sidebar-footer > div { display: flex; justify-content: center; }
+#sidebar.rail #sidebar-footer a { justify-self: center; }
+
+/* ── Rail flyout — body-level popover; escapes the sidebar's overflow:hidden ── */
+.nav-flyout {
+  position: fixed; z-index: 70; min-width: 168px;
+  background: var(--c-panel); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 6px;
+  box-shadow: 0 12px 32px -8px var(--c-shadow, rgba(0,0,0,.45));
+  opacity: 0; transform: scale(.97); transform-origin: left center;
+  pointer-events: none; visibility: hidden;
+  transition: opacity .14s var(--ease-out), transform .14s var(--ease-out);
+}
+.nav-flyout.open { opacity: 1; transform: scale(1); pointer-events: auto; visibility: visible; }
+.nav-flyout.tooltip { min-width: 0; padding: 6px 10px; }
+.nav-flyout-hdr { font-size: 11px; font-weight: 600; color: var(--c-muted); padding: 4px 8px 6px; }
+.nav-flyout-tip { font-size: 13px; font-weight: 500; color: var(--c-text); white-space: nowrap; }
+.nav-flyout-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 0 10px; height: 32px; border-radius: 7px;
+  background: none; border: none; cursor: pointer; text-align: left;
+  font-size: 13px; font-weight: 500; font-family: inherit; color: var(--c-text);
+  transition: background-color .15s ease, transform .13s var(--ease-out);
+}
+.nav-flyout-item > svg { flex-shrink: 0; width: 16px; height: 16px; }
+.nav-flyout-item:active { transform: scale(.98); }
+@media (hover:hover) and (pointer:fine) { .nav-flyout-item:hover { background: var(--c-hover); } }
+
+/* ── Sidebar context selector ── */
+.nav-context {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 10px;
+  flex-shrink: 0;
+}
+.nav-context-avatar {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: rgba(var(--c-accent-rgb), .15);
+  border: 1px solid rgba(var(--c-accent-rgb), .25);
+  color: var(--c-accent);
+  font-size: 10px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; letter-spacing: 0;
+}
+.nav-context-name { font-size: 11px; color: var(--c-muted); letter-spacing: .01em; }
+
+/* ── Footer nav-item (Settings button) ── */
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 8px; height: 32px;
+  border-radius: 6px;
+  font-size: 13px; font-weight: 500;
+  color: var(--c-text);
+  cursor: pointer; background: none; border: none;
+  font-family: inherit;
+  transition: background 150ms ease, color 150ms ease, transform 130ms ease-out;
+}
+.nav-item:active { transform: scale(.97); }
+.nav-item svg { flex-shrink: 0; width: 14px; height: 14px; }
+.nav-item:hover { background: var(--c-hover); color: var(--c-text); }
+
+/* ── Progress bars ── */
+.bar { height: 6px; border-radius: 9999px; background: var(--c-bar-bg); overflow: hidden; position: relative; }
+.bar-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 9999px;
+  /* GPU-friendly reveal (Emil): clip from the right instead of animating `width`
+     (which triggers layout). The gradient fill + shimmer ::after stay full-width
+     and undistorted — only the clip moves. `round` keeps the pill end. --bf is
+     the fill %; default 100% so any bar still on inline `width:` degrades cleanly. */
+  clip-path: inset(0 calc(100% - var(--bf, 100%)) 0 0 round 9999px);
+  transition: clip-path .3s var(--ease-std);
+  position: relative;
+  overflow: hidden;
+}
+.bar-fill::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.18) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+.bar-green  { background: linear-gradient(90deg,#22C55E,#4ADE80); }
+.bar-yellow { background: linear-gradient(90deg,#F59E0B,#FBBF24); }
+.bar-red    { background: linear-gradient(90deg,#EF4444,#F87171); }
+.bar-cyan   { background: linear-gradient(90deg, var(--c-accent), rgba(var(--c-accent-rgb),.6)); }
+
+/* ── Slider (.hd-slider) — built from the .bar language: clip-path gradient fill +
+   shimmer + a frosted knob. Overlay pattern: custom visuals + a transparent native
+   <input type=range> on top for keyboard/screen-reader access. JS sets --p. ── */
+.hd-slider { position:relative; height:26px; --p:50%; }
+.hd-slider input[type=range] { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:pointer; -webkit-appearance:none; appearance:none; }
+.hd-slider input[type=range]:active { cursor:grabbing; }
+.hd-slider .hd-sl-trk { position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); height:6px; border-radius:9999px; background:var(--c-bar-bg); overflow:hidden; }
+.hd-slider .hd-sl-fill { position:absolute; inset:0; clip-path:inset(0 calc(100% - var(--p)) 0 0 round 9999px); background:linear-gradient(90deg, var(--c-accent), rgba(var(--c-accent-rgb),.6)); }
+.hd-slider .hd-sl-fill::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent); background-size:200% 100%; animation:shimmer 2.6s linear infinite; }
+.hd-slider .hd-sl-knob { position:absolute; left:var(--p); top:50%; transform:translate(-50%,-50%); width:15px; height:15px; border-radius:50%; background:rgba(255,255,255,.92); box-shadow:0 1px 4px rgba(0,0,0,.45); transition:transform .16s var(--ease-out), box-shadow .16s var(--ease-out); }
+html.light .hd-slider .hd-sl-knob { background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25),0 0 0 1px var(--c-border); }
+.hd-slider:focus-within .hd-sl-knob { box-shadow:0 0 0 3px rgba(var(--c-accent-rgb),.35),0 1px 4px rgba(0,0,0,.45); }
+@media (hover:hover) and (pointer:fine) { .hd-slider:hover .hd-sl-knob { transform:translate(-50%,-50%) scale(1.2); } }
+.hd-slider:active .hd-sl-knob { transform:translate(-50%,-50%) scale(1.3); }
+@media (prefers-reduced-motion:reduce) { .hd-slider .hd-sl-fill::after { animation:none; } .hd-slider .hd-sl-knob { transition:none; } }
+
+/* ── TARS page — full-height black terminal, no widgets, no page scroll ── */
+/* TARS is an always-dark terminal: pin the dark palette so standard components
+   (.hd-tbtn, .btn-primary, .tars-input) render correctly under either theme. */
+#page-tars.active { --c-bg:#000; --c-panel:#18181B; --c-card:#0A0A0C; --c-border:#27272A; --c-text:#FAFAFA; --c-muted:#A1A1AA; --c-dim:#71717A; --c-hover:#27272A; --c-accent-contrast:#06141A;
+  position:absolute; inset:0; display:flex; flex-direction:column; padding:14px 18px 16px; background:#000; }
+#page-tars .page-hdr { flex-shrink:0; }
+#tars-chat { flex:1; min-height:0; overflow-y:auto; margin:0 0 8px; font-family:'SF Mono','JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.6; }
+/* Inline collapsible thought-process per assistant turn */
+.tturn { margin:0 0 4px; }
+.tthink { margin:2px 0 8px; border-left:2px solid var(--c-border); padding-left:10px; }
+.tthink > summary { cursor:pointer; list-style:none; display:inline-flex; }
+.tthink > summary::-webkit-details-marker { display:none; }
+.tthink-body { margin-top:6px; color:#8b95a3; font-size:12px; line-height:1.6; white-space:pre-wrap; }
+.tthink-body .think-seg { white-space:pre-wrap; }
+.tline { white-space:pre-wrap; word-break:break-word; margin:0 0 11px; }
+.tline-u { color:#e8edf2; }
+.tline-u::before { content:"\203A "; color:var(--c-accent); font-weight:700; }
+.tline-a { color:#9aa6b5; }
+/* Terminal-style markdown in TARS replies (bold/headings/code/lists) */
+.tline-a.tmd { white-space:normal; }
+.tmd .tmd-line { white-space:pre-wrap; }
+.tmd .tmd-gap { height:.55em; }
+.tmd .tmd-h { display:inline-block; color:#e8edf2; font-weight:700; font-size:13px; letter-spacing:-.01em; margin:7px 0 2px; }
+.tmd .tmd-line:first-child .tmd-h { margin-top:0; }
+.tmd strong { color:#f2f5f8; font-weight:700; }
+.tmd em { color:#aab4c2; font-style:italic; }
+.tmd a { color:var(--c-accent); text-decoration:underline; text-underline-offset:2px; }
+.tmd code.tmd-code { font-family:inherit; background:rgba(255,255,255,.07); color:#d4dbe4; padding:1px 5px; border-radius:4px; font-size:.92em; }
+.tmd pre.tmd-pre { background:#0a0d12; border:1px solid #1c2230; border-radius:8px; padding:9px 12px; margin:6px 0; overflow-x:auto; }
+.tmd pre.tmd-pre code { font-family:inherit; background:none; color:#c9d6e3; padding:0; font-size:12px; line-height:1.55; white-space:pre; }
+.tmd .tmd-bullet { color:var(--c-muted); }
+.tmd .tmd-num { color:var(--c-muted); font-variant-numeric:tabular-nums; }
+.tmd .tmd-quote { display:inline-block; border-left:2px solid #2a3340; padding-left:9px; color:#8b95a3; }
+.tmd .tmd-hr { border-top:1px solid #1c2230; margin:8px 0; }
+.tline-live::after { content:"\2588"; color:var(--c-accent); margin-left:1px; animation:tars-blink 1.05s steps(1) infinite; }
+@keyframes tars-blink { 50% { opacity:0; } }
+@media (prefers-reduced-motion:reduce) { .tline-live::after { animation:none; } }
+/* Composer — Claude-style: rounded box, textarea on top, action bar beneath */
+.tars-input-row { flex-shrink:0; display:flex; flex-direction:column; gap:8px; min-height:76px; border:1px solid var(--c-border); background:var(--c-card); border-radius:14px; padding:10px 12px; transition:border-color .12s ease, box-shadow .12s ease; }
+.tars-input-row:focus-within { border-color:var(--c-accent); box-shadow:0 0 0 2px rgba(var(--c-accent-rgb),.3); }
+#tars-input { flex:1; width:100%; box-sizing:border-box; resize:none; min-height:26px; max-height:120px; background:transparent; border:none; outline:none; color:var(--c-text); font-size:13px; font-family:'SF Mono','JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; line-height:1.55; padding:2px 2px; }
+#tars-input::placeholder { color:var(--c-muted); }
+.tars-composer-bar { display:flex; align-items:center; gap:8px; }
+.tars-composer-bar .spacer { flex:1; }
+#tars-send { flex-shrink:0; height:32px; width:32px; padding:0; justify-content:center; border-radius:9px; }
+#tars-send svg { color:var(--c-text); }
+/* Status dot + label */
+.tars-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--c-dim); flex-shrink:0; vertical-align:middle; }
+.tars-dot.ok { background:#3fb950; }
+.tars-dot.bad { background:#e5534b; }
+.tars-status { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--c-dim); }
+.tars-status[data-state="thinking"], .tars-status[data-state="tool"], .tars-status[data-state="responding"] { color:#9aa6b5; }
+.tars-status[data-state="thinking"] .tars-dot, .tars-status[data-state="tool"] .tars-dot { background:#e0a93b; animation:tars-pulse 1.1s ease-in-out infinite; }
+.tars-status[data-state="responding"] .tars-dot { background:var(--c-accent); animation:tars-pulse 1.1s ease-in-out infinite; }
+.tars-status[data-state="done"] .tars-dot { background:#3fb950; }
+.tars-status[data-state="error"] .tars-dot { background:#e5534b; }
+@keyframes tars-pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+/* Tool timeline row */
+.tmd-tool { display:flex; align-items:center; gap:7px; margin:5px 0; font-size:12px; color:#9aa6b5; }
+.tmd-tool .tt-name { color:#c9d6e3; }
+.tmd-tool .tt-sec { color:var(--c-muted); }
+.tmd-tool .tt-spin { width:11px; height:11px; border:1.5px solid #2a3340; border-top-color:var(--c-accent); border-radius:50%; flex-shrink:0; animation:tars-spin .7s linear infinite; }
+.tmd-tool .tt-ok { display:none; color:#3fb950; }
+.tmd-tool[data-done] .tt-spin { display:none; }
+.tmd-tool[data-done] .tt-ok { display:inline; }
+@keyframes tars-spin { to { transform:rotate(360deg); } }
+/* Empty state */
+.tars-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap:15px; padding:24px; }
+.tars-empty-glyph { color:var(--c-dim); }
+.tars-empty-hint { font-size:12.5px; color:#8b95a3; max-width:40ch; line-height:1.55; }
+.tars-chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:440px; }
+.tars-chip { font-family:'SF Mono','JetBrains Mono',ui-monospace,monospace; font-size:12px; color:#c9d6e3; background:#0e1117; border:1px solid #222831; border-radius:9999px; padding:6px 13px; cursor:pointer; transition:background-color .13s ease, border-color .13s ease, transform .13s var(--ease-out); }
+.tars-chip:active { transform:scale(.97); }
+@media (hover:hover) and (pointer:fine) { .tars-chip:hover { background:#1a2230; border-color:#2c3645; } }
+@media (prefers-reduced-motion:reduce) { .tars-dot, .tt-spin { animation:none !important; } .tt-spin { border-top-color:#2a3340; } }
+.tars-modal { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:20px; }
+.tars-modal.open { display:flex; }
+.tars-modal-card { background:var(--c-card); border:1px solid var(--c-border); border-radius:16px; padding:22px 24px; width:min(440px,100%); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+@media (max-width:767px) {
+  #page-tars.active { position:fixed; inset:var(--mob-hdr-h, 52px) 0 0 0; height:auto; padding:10px 12px 12px; }
+}
+
+/* ── Status dot ── */
+.sdot { width:8px; height:8px; border-radius:50%; flex-shrink:0; display:inline-block; }
+.sdot-green { background:#22C55E; box-shadow:0 0 0 2px rgba(34,197,94,.18); }
+.sdot-red   { background:#EF4444; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
+.sdot-grey  { background:var(--c-dim); }
+
+/* ── Badges (pill, Tracearr-style) ── */
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.4;
+  letter-spacing: .02em;
+  border: 1px solid transparent;
+}
+.badge-up      { background:rgba(34,197,94,.13);  color:#16A34A; border-color:rgba(34,197,94,.25); }
+.badge-down    { background:rgba(239,68,68,.13);   color:#DC2626; border-color:rgba(239,68,68,.25); }
+.badge-neutral { background:rgba(113,113,122,.12); color:var(--c-muted); }
+.badge-info    { background:rgba(var(--c-accent-rgb),.12); color:var(--c-accent); border-color:rgba(var(--c-accent-rgb),.28); }
+.badge-warn    { background:rgba(245,158,11,.13);  color:#D97706; border-color:rgba(245,158,11,.28); }
+html.dark .badge-up { color:#4ADE80; }
+html.dark .badge-down { color:#F87171; }
+html.dark .badge-warn { color:#FBBF24; }
+
+/* ── Stat tile (icon + value + label) ── */
+.stat-tile {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  transition: transform .25s var(--ease-std), border-color .25s ease, box-shadow .25s ease;
+}
+.stat-tile:hover {
+  transform: scale(1.02);
+  box-shadow: var(--c-shadow-hover);
+}
+.stat-tile-icon {
+  width: 36px; height: 36px;
+  background: rgba(var(--c-accent-rgb),.1);
+  border: 1px solid rgba(var(--c-accent-rgb),.22);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--c-accent);
+  flex-shrink: 0;
+}
+.stat-tile-val { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: -.01em; }
+.stat-tile-lbl { font-size: 11px; color: var(--c-muted); margin-top: 2px; }
+
+/* ── Stat mini (in-card rows) ── */
+.stat-mini { display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--c-border); font-size:12px; }
+.stat-mini:last-child { border-bottom:none; }
+.stat-mini-lbl { color:var(--c-muted); }
+.stat-mini-val { font-weight:600; font-size:12px; font-variant-numeric: tabular-nums; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Typography scale  (use these classes for ALL page/section/widget titles)
+   ──────────────────────────────────────────────────────────────────────────
+   Tier        Class              Size / weight        Use
+   ─────────   ───────────────    ────────────────     ─────────────────────
+   Page H1     .page-hdr-title    18px / 600           One per page
+   Page sub    .page-hdr-sub      13px / 400 muted     Sentence under H1
+   Section     .sec-hdr-title     14px / 600           Major sections
+   Subsection  .sub-hdr-title     13px / 600           Nested widgets in card
+   Eyebrow     .eyebrow           10px / 600 upper     Tiny labels above lines
+   Field lbl   .stat-mini-lbl     12px / muted         Key/value rows (exists)
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Page header — appears once per page, above all sections */
+.page-hdr {
+  display: flex; flex-direction: column; gap: 4px;
+  /* No top breathing room: the title row is hidden at every width now (the top
+     bar shows it), so the gap below the bar is owned by #pages-root's padding-top
+     and the description sits right under the bar. */
+  padding-top: 0;
+  padding-bottom: 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--c-border);
+}
+.page-hdr-row {
+  /* Hidden at every width: the always-visible top bar already shows the page
+     title, so repeating it here reads as duplicated ("Overview / Overview"). */
+  display: none;
+}
+/* If a page-hdr has neither sub nor meta once the title row is hidden, collapse it. */
+.page-hdr:not(:has(.page-hdr-sub)):not(:has(.page-hdr-meta)) { display: none; }
+.page-hdr-title {
+  font-size: 18px; font-weight: 600;
+  color: var(--c-text);
+  letter-spacing: -.025em;
+  line-height: 1.15;
+  margin: 0;
+}
+.page-hdr-sub {
+  font-size: 13px; font-weight: 400;
+  color: var(--c-muted);
+  line-height: 1.45;
+  max-width: 68ch;
+}
+.page-hdr-meta {
+  display: flex; align-items: center;
+  gap: 14px; flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+.page-hdr-meta-item { display: inline-flex; align-items: center; gap: 6px; }
+.page-hdr-meta-item svg { color: var(--c-dim); }
+.page-hdr-meta-item b {
+  color: var(--c-text); font-weight: 600;
+}
+.page-hdr-meta-sep {
+  width: 1px; height: 11px; background: var(--c-border);
+}
+
+/* Section header (icon + title, optional eyebrow + right-aligned controls) */
+.sec-hdr {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 14px;
+  min-height: 22px;
+}
+.sec-hdr svg { color: var(--c-accent); flex-shrink: 0; }
+/* Pills/controls in the section-header actions are NOT section icons — their
+   icons (e.g. the Custom calendar) must follow the button's own currentColor,
+   not the accent, so they match the in-card (.sub-hdr) pills. */
+.sec-hdr-actions svg { color: inherit; }
+.sec-hdr-title {
+  font-size: 14px; font-weight: 600;
+  color: var(--c-text); letter-spacing: -.01em;
+  line-height: 1.2;
+  flex: 1;
+}
+.sec-hdr-sub {
+  font-size: 12px; font-weight: 400;
+  color: var(--c-muted);
+  margin-left: 2px;
+}
+.sec-hdr-badge {
+  background: var(--c-hover);
+  color: var(--c-muted);
+  font-size: 11px; font-weight: 500;
+  padding: 2px 9px; border-radius: 9999px;
+  border: 1px solid var(--c-border);
+}
+.sec-hdr-actions {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Subsection header — nested widget titles inside cards (quieter than .sec-hdr) */
+.sub-hdr {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 10px;
+  min-height: 18px;
+}
+.sub-hdr svg { color: var(--c-muted); flex-shrink: 0; }
+.sub-hdr-title {
+  font-size: 13px; font-weight: 600;
+  color: var(--c-text); letter-spacing: -.01em;
+  flex: 1;
+}
+.sub-hdr-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+/* Eyebrow — tiny uppercase label, sits above values or as a chart legend */
+.eyebrow {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--c-dim);
+}
+
+/* ── KPI stat card (Tracearr StatCard style) ── */
+.kpi-card {
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  box-shadow: var(--c-shadow);
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: transform .3s ease, box-shadow .3s ease, border-color .3s ease;
+}
+.kpi-card:hover {
+  transform: scale(1.02);
+  box-shadow: var(--c-shadow-hover);
+}
+.kpi-icon {
+  width: 36px; height: 36px;
+  background: rgba(var(--c-accent-rgb), .1);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--c-accent);
+  flex-shrink: 0;
+}
+.kpi-text { min-width: 0; flex: 1; }
+.kpi-val {
+  font-size: 18px; font-weight: 600; line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+.kpi-lbl { font-size: 12px; color: var(--c-muted); margin-top: 1px; }
+.kpi-sub { font-size: 11px; color: var(--c-dim); margin-left: 4px; }
+
+/* ── Empty state ── */
+.empty-card {
+  background: var(--c-card);
+  border: 1px dashed var(--c-border);
+  border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 48px 16px; text-align: center;
+}
+.empty-icon {
+  width: 56px; height: 56px;
+  background: var(--c-hover);
+  border-radius: 9999px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--c-muted);
+  margin-bottom: 16px;
+}
+.empty-title { font-size: 14px; font-weight: 600; color: var(--c-text); margin-bottom: 4px; }
+.empty-sub   { font-size: 12px; color: var(--c-muted); }
+
+/* ── Sidebar dividers (themed via --c-sidebar-border, set in both themes) ── */
+#sidebar [style*="border-bottom"] { border-bottom-color: var(--c-sidebar-border) !important; }
+#sidebar [style*="border-top"]    { border-top-color:    var(--c-sidebar-border) !important; }
+
+/* ── Infrastructure collapsible sections ── */
+.infra-section {
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--c-shadow);
+}
+.infra-section summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px; font-weight: 600;
+  color: var(--c-text);
+  user-select: none;
+  border-bottom: 1px solid transparent;
+  transition: background .15s ease;
+}
+.infra-section summary::-webkit-details-marker { display: none; }
+.infra-section[open] summary { border-bottom-color: var(--c-border); }
+.infra-section summary:hover { background: var(--c-hover); }
+.infra-section summary svg.sec-icon { color: var(--c-accent); flex-shrink: 0; }
+.infra-section summary .chevron { margin-left: auto; color: var(--c-muted); transition: transform .2s ease; flex-shrink: 0; }
+.infra-section[open] summary .chevron { transform: rotate(90deg); }
+.infra-section-body { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Mobile sidebar overlay ── */
+.sidebar-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 40;
+  display: none;
+}
+.sidebar-overlay.open { display:block; animation: fade-in .2s ease-out both; }
+
+/* ── Dark mode toggle ── */
+.dm-btn {
+  padding: 8px;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--c-muted);
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color .2s ease, color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.dm-btn:hover { background: var(--c-hover); color: var(--c-accent); transform: rotate(15deg); }
+
+/* ── Logo mark ── */
+.logo-mark {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--c-accent);
+  flex-shrink: 0;
+}
+
+/* ── Skeleton shimmer ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--c-border) 0%, var(--c-hover) 50%, var(--c-border) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+/* Buttons (Tracearr-style primary) */
+.btn-primary {
+  background: var(--c-accent);
+  color: var(--c-accent-contrast);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color .2s ease, color .2s ease, transform .2s ease, box-shadow .2s ease;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  box-shadow: 0 0 0 0 rgba(var(--c-accent-rgb),.4);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 14px -4px rgba(var(--c-accent-rgb),.6); }
+.btn-primary:active { transform: translateY(0) scale(.97); }
+.btn-ghost {
+  background: transparent;
+  color: var(--c-muted);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .13s ease-out;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-ghost:hover { background: var(--c-hover); color: var(--c-text); border-color: var(--c-dim); }
+.btn-accent-soft {
+  background: rgba(var(--c-accent-rgb),.1);
+  color: var(--c-accent);
+  border: 1px solid rgba(var(--c-accent-rgb),.22);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .13s ease-out;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-accent-soft:hover { background: rgba(var(--c-accent-rgb),.18); }
+
+/* Anchor recolor (since the JS hardcodes a tailwind class) */
+.text-cyan-400 { color: var(--c-accent) !important; }
+
+/* Backup activity heatmap — per-target rows */
+.bk-hm-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-height: 540px; overflow-y: auto; }
+.bk-hm-table { display: flex; flex-direction: column; min-width: max-content; }
+.bk-hm-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 6px; border-radius: 4px;
+  transition: background-color .12s ease;
+}
+.bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(255,255,255,.015); }
+html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0,0,0,.025); }
+.bk-hm-row:not(.bk-hm-head):hover { background: var(--c-hover); }
+.bk-hm-row.bk-hm-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--c-card);
+  padding-bottom: 6px; padding-top: 2px;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 2px;
+}
+.bk-hm-label {
+  width: 240px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; line-height: 1.2; padding: 0 6px 0 2px; min-width: 0;
+  position: sticky; left: 0; z-index: 2;
+  background: var(--c-card);
+  /* Subtle right edge so cells scrolling under the sticky label have a clear
+     boundary rather than peeking through anti-aliasing gaps. */
+  box-shadow: 6px 0 6px -4px rgba(0,0,0,.12);
+}
+.bk-hm-row.bk-hm-head .bk-hm-label { z-index: 3; }
+.bk-hm-label .bk-hm-type { flex-shrink: 0; width: 62px; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--c-muted); }
+.bk-hm-label .bk-hm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-text); font-weight: 500; }
+.bk-hm-label .bk-hm-id   { color: var(--c-muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+/* Storage drive/volume drawer */
+#stor-drawer-overlay {
+  position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.45);
+  display:none;
+}
+#stor-drawer {
+  position:fixed; right:0; top:0; bottom:0; z-index:201;
+  width:500px; max-width:66.67vw;
+  background:var(--c-bg); border-left:1px solid var(--c-border);
+  display:flex; flex-direction:column;
+  transform:translateX(100%); transition:transform .26s var(--ease-std);
+  overflow:hidden;
+  /* shadow only when open (see .open rule) — a parked off-screen drawer would
+     otherwise bleed its left-pointing shadow onto the page's right edge (visible
+     in light mode). */
+}
+#stor-drawer.open { transform:translateX(0); box-shadow:-12px 0 32px rgba(0,0,0,.12); }
+#stor-drawer-body { flex:1; overflow-y:auto; padding:18px 18px 28px; }
+.stor-cell[data-stor] { cursor:pointer; transition:transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+.stor-cell[data-stor]:hover { transform:translateY(-1px); border-color:rgba(var(--c-accent-rgb),.55); box-shadow:0 2px 8px rgba(var(--c-accent-rgb),.12); }
+/* Container/VM detail drawer — same chrome as #stor-drawer */
+#vm-drawer-overlay {
+  position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.45);
+  display:none;
+}
+#vm-drawer {
+  position:fixed; right:0; top:0; bottom:0; z-index:201;
+  width:500px; max-width:66.67vw;
+  background:var(--c-bg); border-left:1px solid var(--c-border);
+  display:flex; flex-direction:column;
+  transform:translateX(100%); transition:transform .26s var(--ease-std);
+  overflow:hidden;
+  /* shadow only when open (see .open rule) — a parked off-screen drawer would
+     otherwise bleed its left-pointing shadow onto the page's right edge (visible
+     in light mode). */
+}
+#vm-drawer.open { transform:translateX(0); box-shadow:-12px 0 32px rgba(0,0,0,.12); }
+#vm-drawer-body { flex:1; overflow-y:auto; padding:18px 18px 28px; }
+/* Phone-only drawer width: 80vw for the genuinely small screens (≤560px). Kept
+   separate from the 768px sidebar-collapse breakpoint so that at 560–767px (a
+   narrow/half-screen DESKTOP where the sidebar minimizes) the drawer stays at its
+   desktop 500px / 2-3-cap width instead of jumping to a too-wide 80%. */
+@media (max-width:560px) {
+  #stor-drawer, #vm-drawer { width:80vw !important; max-width:80vw !important; }
+}
+
+/* Visible keyboard-focus ring (was missing; several inputs killed outlines). */
+:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px;border-radius:3px}
+</style>
+<link rel="stylesheet" href="/static/tailwind.css">
+</head>
+<body style="display:flex;height:100vh;height:100dvh;overflow:hidden;background:var(--c-bg);color:var(--c-text);font-family:'Inter',system-ui,sans-serif">
+
+<!-- Mobile sidebar overlay -->
+<div id="sidebar-overlay" class="sidebar-overlay" onclick="sidebarClose()"></div>
+
+<!-- Desktop expand button (shown when sidebar is collapsed) -->
+<button id="sidebar-expand-btn" onclick="sidebarExpand()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none;position:fixed;top:12px;left:12px;z-index:60;background:var(--c-panel);border:1px solid var(--c-border);border-radius:6px;color:var(--c-muted);cursor:pointer;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,.12)" onmouseenter="this.style.color='var(--c-text)'" onmouseleave="this.style.color='var(--c-muted)'">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+</button>
+
+<!-- ── Sidebar ────────────────────────────────────────────────────────── -->
+<aside id="sidebar" style="width:240px;background:var(--c-panel-glass);backdrop-filter:blur(25px);-webkit-backdrop-filter:blur(25px);border-right:1px solid var(--c-border);position:fixed;top:0;bottom:0;left:0;overflow:hidden;display:flex;flex-direction:column;z-index:50;transition:transform .28s var(--ease-drawer), width .28s var(--ease-drawer)">
+
+  <!-- Logo -->
+  <div id="sidebar-brand" class="flex items-center gap-2 px-3 py-3" style="flex-shrink:0;border-bottom:1px solid var(--c-border)">
+    <div class="logo-mark">
+      <img data-logo src="/api/logo?theme=dark" width="22" height="22" alt="ProxDash" style="display:block">
+    </div>
+    <span id="nav-title" style="font-size:16px;font-weight:600;color:var(--c-text);letter-spacing:-.02em">ProxDash</span>
+    <span id="demo-badge" title="Serving synthetic sample data — no real cluster is connected" style="display:none;margin-left:auto;font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 6px;border-radius:9999px;color:var(--c-accent);background:color-mix(in srgb, var(--c-accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--c-accent) 40%, transparent)">DEMO</span>
+  </div>
+
+  <!-- Nav -->
+  <div class="flex-1 overflow-y-auto" role="navigation" aria-label="Primary" style="min-height:0">
+    <div data-slot="sidebar-group" class="relative flex w-full min-w-0 flex-col p-2">
+      <div data-slot="sidebar-group-content" class="w-full text-sm">
+        <ul data-slot="sidebar-menu" data-sidebar="menu" class="flex w-full min-w-0 flex-col gap-1" style="list-style:none;padding:0;margin:0">
+
+          <!-- Overview -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="true" id="nav-overview" onclick="showPage('overview')" href="javascript:void(0)" aria-current="page">
+              <svg class="nav-ico" data-nav-icon="overview" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="nav-ico__tile" width="7" height="9" x="3" y="3" rx="1"/><rect class="nav-ico__tile" width="7" height="5" x="14" y="3" rx="1"/><rect class="nav-ico__tile" width="7" height="9" x="14" y="12" rx="1"/><rect class="nav-ico__tile" width="7" height="5" x="3" y="16" rx="1"/></svg>
+              <span>Overview</span>
+            </a>
+          </li>
+
+          <!-- Compute -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-proxmox" onclick="showPage('proxmox')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="compute" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="nav-ico__frame" x="4" y="4" width="16" height="16" rx="2"/><rect class="nav-ico__core" x="9" y="9" width="6" height="6"/><line class="nav-ico__pin" x1="9" y1="2" x2="9" y2="4"/><line class="nav-ico__pin" x1="15" y1="2" x2="15" y2="4"/><line class="nav-ico__pin" x1="9" y1="20" x2="9" y2="22"/><line class="nav-ico__pin" x1="15" y1="20" x2="15" y2="22"/><line class="nav-ico__pin" x1="20" y1="9" x2="22" y2="9"/><line class="nav-ico__pin" x1="20" y1="15" x2="22" y2="15"/><line class="nav-ico__pin" x1="2" y1="9" x2="4" y2="9"/><line class="nav-ico__pin" x1="2" y1="15" x2="4" y2="15"/></svg>
+              <span>Compute</span>
+            </a>
+          </li>
+
+          <!-- Storage -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-storage" onclick="showPage('storage')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="storage" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line class="nav-ico__seam" x1="22" y1="12" x2="2" y2="12"/><path class="nav-ico__body" d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line class="nav-ico__led" x1="6" y1="16" x2="6.01" y2="16"/><line class="nav-ico__led" x1="10" y1="16" x2="10.01" y2="16"/></svg>
+              <span>Storage</span>
+            </a>
+          </li>
+
+          <!-- Network -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-network" onclick="showPage('network')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="network" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle class="nav-ico__node" cx="12" cy="5" r="3"/><line class="nav-ico__link" x1="12" y1="8" x2="12" y2="12"/><circle class="nav-ico__node" cx="5" cy="19" r="3"/><circle class="nav-ico__node" cx="19" cy="19" r="3"/><line class="nav-ico__link" x1="5" y1="16" x2="12" y2="12"/><line class="nav-ico__link" x1="19" y1="16" x2="12" y2="12"/></svg>
+              <span>Network</span>
+            </a>
+          </li>
+
+          <!-- Backups -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-backups" onclick="showPage('backups')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="backups" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="nav-ico__body" d="M21 8v13H3V8"/><path class="nav-ico__lid" d="M1 3h22v5H1z"/><line class="nav-ico__handle" x1="10" y1="12" x2="14" y2="12"/></svg>
+              <span>Backups</span>
+            </a>
+          </li>
+
+          <!-- Topology -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-topology" onclick="showPage('topology')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="topology" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle class="nav-ico__node" cx="18" cy="5" r="3"/><circle class="nav-ico__node" cx="6" cy="12" r="3"/><circle class="nav-ico__node" cx="18" cy="19" r="3"/><line class="nav-ico__link" x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line class="nav-ico__link" x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              <span>Topology</span>
+            </a>
+          </li>
+
+          <!-- Health -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-health" onclick="showPage('health')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="health" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="nav-ico__wave" pathLength="1" d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>
+              <span>Health</span>
+            </a>
+          </li>
+
+          <!-- Security -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-security" onclick="showPage('security')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="security" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="nav-ico__shield" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path class="nav-ico__check" pathLength="1" d="m8.75 12 2.1 2.1 4.4-4.4"/></svg>
+              <span>Security</span>
+            </a>
+          </li>
+
+          <!-- Tools -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-tools" onclick="showPage('tools')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="tools" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="nav-ico__tool" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              <span>Tools</span>
+            </a>
+          </li>
+
+          <!-- TARS -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-tars" onclick="showPage('tars')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="tars" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect class="nav-ico__panel" x="5" y="2" width="14" height="20" rx="2"/><line class="nav-ico__scan" x1="9" y1="7" x2="15" y2="7"/><line class="nav-ico__scan" x1="9" y1="12" x2="15" y2="12"/><line class="nav-ico__scan" x1="9" y1="17" x2="13" y2="17"/></svg>
+              <span>Assistant</span>
+            </a>
+          </li>
+
+          <!-- Settings -->
+          <li data-slot="sidebar-menu-item" data-sidebar="menu-item" class="relative">
+            <a data-slot="sidebar-menu-button" data-sidebar="menu-button" data-active="false" id="nav-settings" onclick="showPage('settings')" href="javascript:void(0)">
+              <svg class="nav-ico" data-nav-icon="settings" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="nav-ico__gear" d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle class="nav-ico__hub" cx="12" cy="12" r="3"/></svg>
+              <span>Settings</span>
+            </a>
+          </li>
+
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer — aligned rows: left {username · settings · live} | right {logout · theme · time} -->
+  <div id="sidebar-footer" class="px-3 py-3" style="border-top:1px solid var(--c-border);display:flex;flex-direction:column;gap:11px;flex-shrink:0;padding-left:18px;padding-right:18px">
+
+    <!-- Row 1: profile (L) · username (C) · logout (R) -->
+    <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;min-height:20px">
+      <span id="auth-user" style="display:none;align-items:center;justify-self:start"><img id="auth-thumb" src="" alt="" style="width:20px;height:20px;border-radius:50%;object-fit:cover;display:none"></span>
+      <span id="auth-username" class="text-xs" style="color:var(--c-muted);justify-self:center;text-align:center;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+      <a href="/auth/logout" title="Sign out" aria-label="Sign out"
+         style="color:var(--c-dim);display:flex;justify-self:end"
+         onmouseenter="this.style.color='var(--c-text)'" onmouseleave="this.style.color='var(--c-dim)'">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </a>
+    </div>
+
+    <!-- Row 2: live status (L) · last-updated time (R). Theme toggle lives in the top bar. -->
+    <div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;min-height:18px">
+      <span style="display:flex;align-items:center;gap:6px;justify-self:start;min-width:0">
+        <span id="ws-dot" class="sdot sdot-red"></span>
+        <span id="ws-label" class="text-xs" style="color:var(--c-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Connecting…</span>
+      </span>
+      <span id="last-updated" class="text-xs" style="color:var(--c-dim);white-space:nowrap;justify-self:end"></span>
+    </div>
+
+  </div>
+</aside>
+
+<!-- ── Main content ───────────────────────────────────────────────────── -->
+<div style="margin-left:240px;flex:1;display:flex;flex-direction:column;min-width:0;position:relative" id="main-wrap">
+
+  <!-- Top bar (hamburger + page title + dark toggle). Absolute overlay over the
+       content area (full-bleed by layout — left:0/right:0 of #main-wrap, so it can't
+       be inset by the scroller's gutter), with the content scrolling UNDER it. On
+       mobile it re-asserts position:sticky for native document scroll. -->
+  <div id="mobile-hdr" class="mobile-hdr">
+    <button class="hamburger" onclick="sidebarToggle()" title="Toggle menu" aria-label="Toggle menu">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <span id="mobile-page-title" class="mobile-hdr-title">Overview</span>
+    <button id="dm-toggle-mob" class="dm-btn" onclick="toggleDark()" title="Toggle dark mode" aria-label="Toggle dark mode">
+      <svg id="dm-icon-moon-mob" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg id="dm-icon-sun-mob" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+
+  <!-- Pages. The scroller; content scrolls UNDER the absolute top bar. -->
+  <div class="flex-1 overflow-y-auto" style="overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch" id="pages-root">
+    <!-- Padded content gutter; pages lazy-load into #pages-host. Full-bleed pages
+         are absolute and pin to #main-wrap, so this padding never affects them. -->
+    <div id="pages-content" style="padding:4px 0 20px">
+      <!-- Debug error banner (hidden unless JS error) -->
+      <div id="hd-jserr" style="display:none;background:#450a0a;color:#fca5a5;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:12px;font-family:monospace"></div>
+      <!-- Pages host (lazy-loaded from /static/pages/<name>.html) -->
+      <div id="pages-host"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Clip layer for the slide-in drawers. They are position:fixed and parked
+     off-screen to the right (translateX(100%)) when closed — fixed elements are
+     NOT clipped by body/html overflow, so on iOS that off-screen box becomes a
+     horizontally-scrollable strip of empty space. Wrapping them in a fixed,
+     viewport-sized box with `transform` (which makes it their containing block)
+     + overflow:hidden clips the parked drawers without touching the page scroll
+     model or the slide animation. pointer-events:none keeps the page clickable;
+     the overlays/drawers re-enable it for themselves. -->
+<div id="drawer-clip">
+<!-- ── Storage drive / volume drawer ─────────────────────────────────────── -->
+<div id="stor-drawer-overlay" onclick="closeStorDrawer()"></div>
+<div id="stor-drawer" role="dialog" aria-modal="true" aria-label="Storage details">
+  <div id="stor-drawer-body"></div>
+</div>
+
+<!-- ── Container / VM detail drawer ──────────────────────────────────────── -->
+<div id="vm-drawer-overlay" onclick="closeGuestDrawer()"></div>
+<div id="vm-drawer" role="dialog" aria-modal="true" aria-label="Guest details">
+  <div id="vm-drawer-body"></div>
+</div>
+
+</div><!-- /#drawer-clip -->
+
+<!-- Toast -->
+<div id="hd-toast" class="fixed bottom-5 right-5 z-[200] hidden" role="status" aria-live="polite" aria-atomic="true">
+  <div id="hd-toast-inner" style="border-radius:8px;padding:10px 16px;font-size:12px;font-weight:500"></div>
+</div>
+
+<style>
+/* Accent swatch row (General settings). */
+.accent-swatch {
+  width:26px; height:26px; border-radius:9999px;
+  border:2px solid var(--c-border);
+  background:transparent; cursor:pointer; padding:0;
+  position:relative; transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.accent-swatch:hover { transform:scale(1.08); }
+.accent-swatch.active {
+  border-color:var(--c-text);
+  box-shadow:0 0 0 2px var(--c-bg), 0 0 0 4px var(--c-text);
+}
+.accent-swatch.active::after {
+  content:'';
+  position:absolute; inset:4px;
+  border-radius:9999px;
+  background:inherit;
+  pointer-events:none;
+}
+/* Settings page layout — top pill toggle + content card stack. */
+.settings-shell {
+  display: flex; flex-direction: column;
+  gap: 16px;
+}
+.settings-pill-row {
+  display: flex; align-items: center;
+}
+.settings-pill-row .hist-range {
+  margin-left: 0;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-pill-row .hist-range::-webkit-scrollbar { display: none; }
+.settings-pill-row .hist-btn {
+  /* sizing (font-size/padding) is owned by #set-section-hist-range so there is
+     a single source of truth; only layout lives here. */
+  border-radius: 7px;
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.settings-pill-row .hist-btn svg { flex-shrink: 0; }
+.settings-content {
+  padding: 20px 24px;
+  min-height: 400px;
+}
+.settings-save-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  position: sticky; bottom: 0;
+}
+@media (max-width: 768px) {
+  .settings-content { padding: 16px; }
+  /* Topology menu bar — compact + sensible stacking on phones:
+     row 1 tabs · row 2 orientation · row 3 search (all centred). */
+  #topo-tabbar-wrap { padding: 8px 12px !important; gap: 8px !important; justify-content: center !important; }
+  #topo-tabbar-wrap #topo-tabs-hist-range { order: 1; }
+  #topo-tabbar-wrap #topo-orient-wrap { order: 2; flex: 0 0 auto !important; justify-content: center !important; }
+  #topo-tabbar-wrap #topo-view-controls { order: 3; flex: 1 1 100% !important; justify-content: center; }
+  #topo-tabbar-wrap #topo-view-controls input[type="search"] { width: 100% !important; max-width: 280px; }
+  /* Map menu bar — tighter gutters on phones */
+  .map-menubar { padding: 6px 14px !important; }
+}
+/* Legacy sidebar styles kept for any external code referencing them. */
+.settings-nav { display: flex; flex-direction: column; gap: 2px; }
+.snav-btn {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  background: transparent; color: var(--c-muted);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: background .15s ease, color .15s ease;
+  font-family: inherit;
+}
+
+/* Legacy modal tab buttons — retained in case any external code references them. */
+.stab-btn {
+  background: transparent;
+  color: var(--c-muted);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .13s ease-out;
+  font-family: inherit;
+}
+.stab-btn:hover { background: var(--c-hover); color: var(--c-text); }
+.stab-btn.active {
+  background: rgba(var(--c-accent-rgb),.1);
+  color: var(--c-accent);
+  border-color: rgba(var(--c-accent-rgb),.28);
+}
+
+/* Settings form */
+.s-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.s-lbl { font-size:12px; color:var(--c-muted); width:110px; flex-shrink:0; text-align:right; }
+.s-inp {
+  flex:1; min-width:0;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 12px;
+  color: var(--c-text);
+  font-family: inherit;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.s-inp:focus {
+  outline: none;
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px rgba(var(--c-accent-rgb),.18);
+}
+.s-check { accent-color: var(--c-accent); width:14px; height:14px; }
+.s-group { border: 1px solid var(--c-border); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; background: var(--c-bg); }
+.s-group-title { font-size:10px; font-weight:600; color:var(--c-muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:10px; }
+.s-svc-block { border:1px solid var(--c-border); border-radius:8px; padding:10px 12px; margin-bottom:8px; transition: border-color .15s ease; }
+.s-svc-block:hover { border-color: var(--c-dim); }
+.s-btn { background: var(--c-hover); color: var(--c-muted); border: none; border-radius: 8px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; transition: background-color .15s ease, color .15s ease, transform .13s ease-out; }
+.s-btn:hover { background: var(--c-border); color: var(--c-text); }
+.s-btn-danger { background: rgba(239,68,68,.1); color:#EF4444; border:1px solid rgba(239,68,68,.22); }
+.s-btn-danger:hover { background: rgba(239,68,68,.18); }
+.s-reveal { background: var(--c-border); color: var(--c-muted); border:none; border-radius:6px; padding:0 8px; cursor:pointer; font-size:13px; transition: background .15s ease; }
+.s-reveal:hover { background: var(--c-dim); color: var(--c-text); }
+.s-help {
+  font-size:11px; line-height:1.45; color:var(--c-muted);
+  background:rgba(var(--c-accent-rgb),.06); border-left:2px solid rgba(var(--c-accent-rgb),.4);
+  padding:7px 10px; border-radius:0 6px 6px 0; margin:6px 0 10px;
+}
+.s-help a { color:var(--c-accent); text-decoration:underline; }
+.s-help code { background:var(--c-hover); padding:1px 5px; border-radius:4px; font-size:11px; color:var(--c-text); }
+.s-test-row { display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+.s-test-btn { display:inline-flex; align-items:center; gap:6px; }
+.s-test-btn:disabled { opacity:.6; cursor:wait; }
+.s-test-result { font-size:11px; flex:1; min-width:0; word-break:break-word; }
+
+/* Toast styling */
+#hd-toast-inner {
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  border: 1px solid var(--c-border);
+  backdrop-filter: blur(8px);
+  animation: slide-in-right .25s ease-out both;
+}
+
+/* ── Responsive grid utilities ── */
+/* Two-up when there's room, one-up when cramped — driven by AVAILABLE width
+   (auto-fit), not viewport width, so it collapses correctly with the sidebar
+   eating space or in a near-square window. */
+.hd-row-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:14px; margin-bottom:24px; }
+.hd-row-3 { display:grid; grid-template-columns:repeat(auto-fit, minmax(258px, 1fr)); gap:14px; margin-bottom:24px; }
+/* Compact entity-card grid for VMs / LXCs. auto-FILL (not auto-fit):
+   empty tracks stay reserved, so a section with 2 VMs renders them at the same
+   width as a full row of LXCs instead of stretching to fill — every guest card
+   is the same size regardless of count. Hosts keep .hd-row-3's auto-fit. */
+.hd-row-compact { display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:14px; margin-bottom:24px; }
+
+/* Hide the content scroller's native scrollbar. A reserved/classic scrollbar
+   (macOS "Show scroll bars: Always") otherwise insets the whole scroll area,
+   leaving a gutter on the right that keeps the full-bleed top bar + content from
+   reaching the true edge. Content still scrolls via wheel / trackpad / keys. */
+#pages-root { scrollbar-width: none; }
+#pages-root::-webkit-scrollbar { display: none; }
+
+/* ── Mobile header (hamburger bar, hidden on desktop) ── */
+.mobile-hdr {
+  display: flex;        /* always shown — top bar at every width (hamburger toggles the sidebar) */
+  align-items: center;
+  gap: 10px;
+  /* 10px horizontal padding + the icon buttons' own 6px = the hamburger/toggle
+     glyphs sit ~16px in, lining up with where the widgets' content begins (cards
+     use p-4 = 16px), not the invisible card edge. */
+  padding: 10px 10px;
+  /* Frosted bar — translucent ink tint + blur. KNOWN TRADE-OFF: backdrop-filter
+     flickers the bar's text/icons during the iOS overscroll rubber-band (WebKit
+     re-rasterizes the blur layer mid-bounce and drops the foreground until the
+     scroll settles). Kept by explicit user preference: they want the frosted
+     look and accept the bounce flicker. The alternative (no flicker) is to drop
+     either the blur or the page bounce. */
+  background: rgba(255,255,255,.4);
+  -webkit-backdrop-filter: blur(25px);
+  backdrop-filter: blur(25px);
+  border-bottom: 1px solid transparent;
+  flex-shrink: 0;
+  /* Absolute overlay (desktop): full-bleed across #main-wrap (left:0/right:0) so the
+     scroller's gutter can never inset it; the content scrolls UNDER it. Mobile
+     re-asserts position:sticky below for native document scroll. */
+  position: absolute; top: 0; left: 0; right: 0; z-index: 30;
+}
+html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
+@media (min-width: 768px) {
+  /* Push the scrolling content below the overlaid bar (bar height; the 4px gap to
+     the description is owned by #pages-content's padding-top). Content scrolls
+     UNDER the bar so the frosted blur still has something behind it. */
+  #pages-root { padding-top: var(--mob-hdr-h, 52px) !important; }
+  /* Full-bleed pages (absolute;inset:0) pin below the bar, against #main-wrap. */
+  #page-topology.active { top: var(--mob-hdr-h, 52px) !important; }
+}
+.mobile-hdr-title { font-size:16px; font-weight:600; color:var(--c-text); flex:1; letter-spacing:-.01em; }
+.hamburger {
+  background: none; border: none; cursor: pointer;
+  color: var(--c-muted); padding: 6px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s;
+}
+.hamburger:hover { background: var(--c-hover); color: var(--c-text); }
+
+/* ── Mobile overrides ── */
+@media (max-width:767px) {
+  /* Mobile = native document scroll (so the page rubber-band-bounces and the
+     Safari URL bar collapses), with the header as a position:sticky element so
+     it bounces WITH the page instead of floating fixed above it. */
+  body { display: block !important; height: auto !important; min-height: 100dvh; overflow-x: hidden; overflow-y: visible !important; }
+  #main-wrap { margin-left: 0 !important; display: block !important; }
+  #pages-root { overflow: visible !important; height: auto !important; }
+  .mobile-hdr { display: flex; padding-top: max(10px, env(safe-area-inset-top)); position: sticky; top: 0; z-index: 30; }
+  #sidebar-expand-btn { display: none !important; }
+  #sidebar { width: min(280px, 85vw) !important; padding-left: env(safe-area-inset-left); }
+  /* Content flows right after the sticky bar — minimal top gap so text starts
+     directly below the bar; normal gutters on the sides + safe-area bottom. */
+  #pages-content { padding: 4px 0 !important; padding-bottom: max(14px, env(safe-area-inset-bottom)) !important; }
+
+  /* Full-bleed pages (map/topology) are authored as position:absolute;inset:0
+     against a fixed-height scroller. Under mobile document-scroll the scroller has
+     no height, so they collapse — pin them to the viewport below the sticky bar
+     instead. --mob-hdr-h is measured + set by _mobileHdrSync(). */
+  #page-topology.active {
+    position: fixed !important;
+    inset: var(--mob-hdr-h, 52px) 0 0 0 !important;
+    height: auto !important;
+  }
+
+  /* Built-in grid utilities */
+  .hd-row-2 { grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+  .syn-nas-row, .syn-bot-row { grid-template-columns: 1fr !important; }
+  .hd-row-3 { grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+  .hd-row-compact { grid-template-columns: 1fr; gap: 12px; margin-bottom: 18px; }
+  /* Health checks are compact status tiles, not full-width banners — keep them
+     2-up on phones so a dozen checks don't turn into a giant scrolling stack.
+     The tick strip + latency sparkline scale down fine at half width. */
+  #page-health .hd-row-3 { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  #page-health #health-vitals, #page-health #health-subsys { grid-template-columns: 1fr; }
+  /* min-width:0 lets the card shrink below its tick-strip's min-content so the
+     2-up tracks hold their width instead of overflowing the viewport; the strip
+     already clips (overflow-hidden, right-aligned) to the most recent history. */
+  #page-health .hd-row-3 .hd-card { padding: 12px; min-width: 0; }
+  #page-health .hd-row-3 .hd-card > .flex.gap-px { min-width: 0; }
+  /* Section headers wrap cleanly */
+  .sec-hdr { flex-wrap: wrap; gap: 6px 8px; margin-bottom: 12px; }
+  .sec-hdr-title { font-size: 14px; }
+  .sec-hdr-sub   { font-size: 11px; }
+  .hist-range { flex-wrap: wrap; max-width: 100%; margin-left: auto; }
+
+  /* Storage / Ceph card header: name + (Predictions + range pills) +
+     status badge all in one inline-flex row → overflows on phones once the
+     6-button range strip is in play. Allow wrap, then force the toolbar to
+     its own full-width row beneath the title. */
+  .stor-card-hdr { flex-wrap: wrap; }
+  .stor-card-hdr .stor-toolbar {
+    order: 99;
+    flex: 1 1 100%;
+    margin-left: 0 !important;
+    margin-top: 4px;
+    justify-content: flex-start;
+  }
+  /* Per-chart sub-header (label + confidence pill + Historical/Prediction
+     legend). Same fix: wrap, drop legend onto its own row. */
+  .stor-hdr { flex-wrap: wrap; gap: 6px 8px; }
+  .stor-hdr .stor-hdr-spacer { display: none; }
+  .stor-hdr .stor-legend {
+    flex: 1 1 100%;
+    margin-top: 2px;
+    justify-content: flex-start;
+  }
+
+  /* Chart canvases capture touch by default, so a finger landing on (e.g.)
+     the Draw Over Time chart blocks the page from scrolling. Tell the
+     browser to handle vertical pan natively — taps still reach Chart.js
+     for tooltips, but a vertical drag scrolls the page. */
+  canvas { touch-action: pan-y; }
+
+  /* Page headers shrink + meta wraps. Hide the in-page H1 — the mobile
+     header bar already shows the page title, so showing it again here
+     reads as duplicated ("Overview / Overview"). */
+  .page-hdr { padding-top: 0; padding-bottom: 12px; }
+  .page-hdr-row   { display: none; }
+  .page-hdr-sub   { font-size: 12px; }
+  .page-hdr-meta  { gap: 10px; font-size: 11px; margin-top: 6px; }
+  /* Trim verbose text on mobile: drop the overview blurb + meta parentheticals. */
+  #page-overview .page-hdr-sub { display: none; }
+  .ov-meta-sub { display: none; }
+  .sub-hdr-title  { font-size: 12px; }
+  /* If a page-hdr has neither sub nor meta after hiding the row, collapse it */
+  .page-hdr:not(:has(.page-hdr-sub)):not(:has(.page-hdr-meta)) {
+    display: none;
+  }
+
+  /* Overview Network card: keep title + WAN/clients + Down/Up legend on ONE line.
+     The grid (minmax 480px) keeps the widget full-width here, so there's room —
+     no reordering or forced second row. */
+  .ov-net-meta span { white-space: nowrap; }
+
+  /* KPI tiles tighter */
+  .kpi-card { padding: 10px; gap: 10px; }
+  .kpi-icon { width: 32px; height: 32px; }
+  .kpi-val { font-size: 16px; }
+  .kpi-lbl { font-size: 11px; }
+
+  /* Card padding slimmer (Tailwind p-4 = 16px → 12px) */
+  .hd-card.p-4 { padding: 12px !important; }
+
+  /* Stack hardcoded inline 2-col grids */
+  [style*="grid-template-columns:1fr 1fr"],
+  [style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
+
+  /* Overview 2fr 1fr 1fr row → stack with auto row height */
+  [style*="grid-template-columns:2fr 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto !important;
+  }
+
+  /* Cluster history 3-col layout → stack */
+  [style*="grid-template-columns:280px 1fr 280px"] { grid-template-columns: 1fr !important; }
+
+  /* Storage topology: keep 3-col horizontal layout on mobile, just narrower */
+  #stor-scroll [style*="grid-template-columns:280px 1fr 280px"] {
+    grid-template-columns: 170px 1fr 170px !important;
+  }
+  #stor-scroll .stor-pc, #stor-scroll .stor-cc {
+    padding: 8px 9px !important;
+  }
+  #stor-scroll .stor-pc span, #stor-scroll .stor-cc span { font-size: 11px !important; }
+
+  /* Auto-fill minmax grids — collapse wide minimums */
+  [style*="minmax(360px"],
+  [style*="minmax(300px"],
+  [style*="minmax(280px"],
+  [style*="minmax(260px"],
+  [style*="minmax(240px"],
+  [style*="minmax(220px"] { grid-template-columns: 1fr !important; }
+  [style*="minmax(200px"],
+  [style*="minmax(180px"],
+  [style*="minmax(160px"],
+  [style*="minmax(140px"] { grid-template-columns: repeat(auto-fill, minmax(140px,1fr)) !important; }
+  [style*="minmax(90px"] { grid-template-columns: repeat(auto-fill, minmax(80px,1fr)) !important; }
+
+  /* (Drawer width override moved out of this 768px block — see the phone-only
+     @media(max-width:560px) rule near the drawer styles. At 560–767px the sidebar
+     collapses but the drawer keeps its desktop 500px/2-3 width, which fits better
+     than 80vw at those near-desktop widths.) */
+
+  /* Health/HC settings rows: stack so the URL field isn't crushed.
+     Row 1 = Name + URL, row 2 = remove + Test, mirroring .syn-nas-row. */
+  .hc-row {
+    grid-template-columns: 110px 1fr !important;
+    gap: 6px !important;
+    align-items: center !important;
+  }
+  /* Hide the header pseudo-row's empty action columns on mobile (the values
+     stack inside each .hc-row instead). */
+  [style*="grid-template-columns:120px 1fr 28px"] {
+    grid-template-columns: 110px 1fr !important;
+    gap: 6px !important;
+  }
+
+  /* Tame any oversized canvases */
+  canvas { max-width: 100% !important; }
+
+  /* Topology pages — narrower cards on mobile; tier columns already horizontal by default */
+  #net-canvas, #comp-canvas { gap: 32px !important; }
+  #net-canvas > div, #comp-canvas > div { gap: 32px !important; }
+  .net-card, .comp-card { width: 170px !important; }
+  #net-scroll, #comp-scroll { padding: 18px 14px !important; }
+
+  /* Backups snapshots table: hide low-priority Verify/Owner columns and let the
+     search field span the row so the fixed-layout table isn't crushed at 390px. */
+  #page-backups #bk-search { width: 100% !important; flex: 1 1 auto !important; }
+  #page-backups #bk-thead th:nth-child(5), #page-backups #bk-thead th:nth-child(6),
+  #page-backups #bk-rows td:nth-child(5), #page-backups #bk-rows td:nth-child(6) { display: none !important; }
+}
+
+/* ── History range pill slider ── */
+.hist-range {
+  display:inline-flex; align-items:center;
+  padding:3px; border-radius:10px;
+  background:var(--c-hover); position:relative;
+  margin-left:auto; gap:0; flex-shrink:0;
+}
+.hist-thumb {
+  position:absolute; top:3px; height:calc(100% - 6px);
+  border-radius:7px; background:var(--c-card);
+  box-shadow:0 1px 4px rgba(0,0,0,.14),0 0 0 .5px rgba(255,255,255,.06);
+  transition:left .22s var(--ease-drawer),width .22s var(--ease-drawer);
+  pointer-events:none;
+}
+.hist-btn {
+  position:relative; z-index:1;
+  font-size:11px; font-weight:500;
+  padding:4px 10px; border-radius:7px;
+  background:transparent; color:var(--c-muted);
+  border:none; cursor:pointer; font-family:inherit;
+  transition:color .15s ease, transform .13s ease-out;
+  white-space:nowrap; line-height:1.4;
+  display:inline-flex; align-items:center; gap:4px;
+}
+.hist-btn.active { color:var(--c-text); font-weight:600; }
+.hist-btn:not(.active):hover { color:var(--c-text); }
+/* Per-chart "Range" band toggle — a single on/off chip styled to read like a
+   pill segment (matches .hist-btn sizing; fills like a thumb when active)
+   instead of the old shrunken bare button. */
+.chart-range-toggle {
+  font-size:11px; font-weight:500; line-height:1.4;
+  padding:4px 10px; border-radius:7px;
+  background:var(--c-hover); color:var(--c-muted);
+  border:none; cursor:pointer; font-family:inherit;
+  display:inline-flex; align-items:center; gap:4px;
+  transition:color .15s ease, background .15s ease;
+}
+.chart-range-toggle:hover { color:var(--c-text); }
+.chart-range-toggle.active {
+  background:var(--c-card); color:var(--c-text); font-weight:600;
+  box-shadow:0 1px 4px rgba(0,0,0,.14),0 0 0 .5px rgba(255,255,255,.06);
+}
+/* Settings section tabs reuse .hist-range but carry icons; trim their icon size
+   + padding so the bar sits closer to the standard 29px pill height. */
+#set-section-hist-range .hist-btn { padding:5px 11px; font-size:12px; }
+#set-section-hist-range .hist-btn svg { width:14px; height:14px; }
+/* Tool widgets (speed/storage/reachability/WoL) — shared by the Tools page and
+   the Network page's Internet Speed card. The run button matches the pill
+   selectors (borderless --c-hover, radius 10); running shows an orbiting satellite
+   driven by _runBtnStart/_runBtnStop. */
+/* Tool-card header — top-level card title (keeps the accent icon, normalized to
+   the type scale: 14px accent icon, 13px/600 label, gap 7px). */
+.tool-card-hdr{ display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+.tool-card-hdr .tch-ic{ color:var(--c-muted); display:inline-flex; flex-shrink:0; }
+.tool-card-hdr .tch-t{ font-size:13px; font-weight:600; color:var(--c-text); }
+.tool-field{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--c-muted); }
+.tool-field > span{ flex-shrink:0; width:64px; }
+.tool-select{ flex:1; min-width:0; height:30px; border-radius:7px; border:1px solid var(--c-border);
+  background:var(--c-bg); color:var(--c-text); font-family:inherit; font-size:12px; padding:0 8px; outline:none; box-sizing:border-box;
+  transition:border-color .15s ease, box-shadow .15s ease; }
+.tool-select:focus{ border-color:var(--c-accent); box-shadow:0 0 0 3px rgba(var(--c-accent-rgb),.15); }
+/* Matches the .hd-tbtn toolbar buttons (e.g. the TARS page): bordered, card bg,
+   8px radius, hover lightens the background. Kept full-width (pinned to the
+   bottom of each tool card) + the .busy running-orb state below. */
+.tool-run{ display:flex; align-items:center; justify-content:center; gap:9px;
+  width:100%; height:34px; border:1px solid var(--c-border); border-radius:8px;
+  background:var(--c-card); color:var(--c-text);
+  font-size:13px; font-family:inherit; cursor:pointer;
+  transition:background-color .12s ease, border-color .12s ease, color .15s ease, transform .13s var(--ease-out); }
+.tool-run:active:not(.busy){ transform:scale(.97); }   /* press feedback — the UI heard you */
+.tool-run.busy{ cursor:wait; color:var(--c-accent); }
+.tool-run.just-ran{ color:var(--c-text)!important; }   /* after a run: stay neutral until the cursor leaves */
+/* Hover effects gated to real pointers so a touch tap doesn't stick in :hover. */
+@media (hover:hover) and (pointer:fine){
+  .tool-select:hover{ border-color:var(--c-accent); }
+  .tool-run:hover:not(.busy){ background:var(--c-hover); }
+}
+/* Tool cards = equal-height flex columns so the run button stays pinned to the
+   bottom (it used to drift up when a chart/result grew a sibling card in the row). */
+#page-tools .hd-row-3 > .hd-card{ display:flex; flex-direction:column; }
+#page-tools .tool-run{ margin-top:auto; }
+/* Result content arrives with a gentle rise instead of snapping in. */
+#page-tools [id^="tool-"][id$="-result"] > *{ animation:fade-in .28s var(--ease-out) both; }
+.tool-run .tr-run{ display:none; align-items:center; gap:9px; }
+.tool-run.busy .tr-run{ display:inline-flex; }
+.tool-run.busy .tr-idle{ display:none; }
+.orb-scene{ position:relative; width:20px; height:20px; flex-shrink:0; }
+.orb-scene .planet{ position:absolute; left:10px; top:10px; width:7px; height:7px; margin:-3.5px 0 0 -3.5px; border-radius:50%;
+  background:radial-gradient(circle at 34% 30%, #d6f7ff, var(--c-accent)); box-shadow:0 0 6px rgba(var(--c-accent-rgb),.5); opacity:.85; }
+.orb-scene .spin{ position:absolute; left:10px; top:10px; width:0; height:0; }
+.orb-scene .sat{ position:absolute; left:-2.5px; top:-11px; width:5px; height:5px; border-radius:50%;
+  background:radial-gradient(circle at 35% 35%, #fff, var(--c-accent) 75%); box-shadow:0 0 6px 1px rgba(var(--c-accent-rgb),.85); }
+/* Custom date popover */
+.hist-pop {
+  display:none; flex-direction:column; gap:10px;
+  position:absolute; top:calc(100% + 8px); right:0; z-index:300;
+  min-width:230px; background:var(--c-card);
+  border:1px solid var(--c-border); border-radius:12px; padding:14px;
+  box-shadow:0 8px 32px rgba(0,0,0,.22),0 2px 8px rgba(0,0,0,.1);
+}
+.hist-pop.show { display:flex; }
+.hist-pop-label {
+  display:block; font-size:10px; font-weight:600;
+  text-transform:uppercase; letter-spacing:.04em;
+  color:var(--c-muted); margin-bottom:4px;
+}
+.hist-date {
+  font-size:12px; background:var(--c-bg); color:var(--c-text);
+  border:1px solid var(--c-border); border-radius:7px;
+  padding:6px 9px; font-family:inherit; cursor:pointer;
+  width:100%; box-sizing:border-box; outline:none;
+  transition:border-color .15s;
+}
+.hist-date:focus { border-color:var(--c-accent); }
+html.dark .hist-date::-webkit-calendar-picker-indicator { filter:invert(60%); }
+.hist-pop-apply { background:var(--c-accent); color:#fff; }
+html.dark .hist-pop-apply { color:#000; }
+.hd-legend { display:flex; gap:12px; flex-wrap:wrap; padding:0 0 6px; justify-content:flex-end; }
+/* Inline variant: legend sits in a .sub-hdr row beside the title (no bottom pad). */
+.hd-legend-inline { padding:0; gap:10px; }
+.hd-legend-item { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--c-muted); white-space:nowrap; }
+.hd-legend-line { width:14px; height:2px; border-radius:1px; flex-shrink:0; }
+/* Legacy dot kept for backwards-compat with any inline markup that still uses it. */
+.hd-legend-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+
+/* Shared sizing for storage volume + physical drive / Ceph OSD cells so they
+   line up identically on the Storage page regardless of content. */
+.stor-cell { min-height: 92px; }
+
+/* Storage trend chart — Tracearr-style inline legend in header */
+.stor-hdr { display:flex; align-items:center; gap:6px; margin-bottom:8px; min-width:0; }
+.stor-hdr-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--c-muted); flex-shrink:0; }
+.stor-hdr-spacer { flex:1; min-width:8px; }
+.stor-legend { display:flex; align-items:center; gap:12px; font-size:10px; color:var(--c-muted); flex-wrap:nowrap; }
+.stor-leg { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.stor-leg-line { width:14px; height:2px; background:var(--c-accent); border-radius:1px; flex-shrink:0; }
+.stor-leg-line.dashed { background:transparent; border-top:2px dashed var(--c-accent); height:0; }
+.stor-leg-dia { width:6px; height:6px; background:var(--c-accent); transform:rotate(45deg); display:inline-block; flex-shrink:0; margin:0 -2px; }
+.stor-conf-pill {
+  display:none; align-items:center; gap:4px; font-size:9px; font-weight:600;
+  text-transform:uppercase; letter-spacing:.04em; padding:2px 7px; border-radius:999px;
+  flex-shrink:0; line-height:1.3; border:1px solid transparent;
+}
+.stor-conf-pill.show { display:inline-flex; }
+.stor-conf-pill::before { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; box-shadow:0 0 6px currentColor; }
+/* Confidence variants — match Tracearr's Badge success/warning/secondary. */
+.stor-conf-pill.conf-high   { background:rgba(34,197,94,.12);  color:#16A34A; border-color:rgba(34,197,94,.3); }
+.stor-conf-pill.conf-medium { background:rgba(245,158,11,.12); color:#D97706; border-color:rgba(245,158,11,.3); }
+.stor-conf-pill.conf-low    { background:rgba(113,113,122,.14); color:#71717A; border-color:rgba(113,113,122,.3); }
+html.dark .stor-conf-pill.conf-high   { background:rgba(34,197,94,.18); color:#4ADE80; border-color:rgba(74,222,128,.3); }
+html.dark .stor-conf-pill.conf-medium { background:rgba(245,158,11,.18); color:#FBBF24; border-color:rgba(251,191,36,.3); }
+html.dark .stor-conf-pill.conf-low    { background:rgba(161,161,170,.16); color:#A1A1AA; border-color:rgba(161,161,170,.3); }
+
+
+/* Storage chart custom tooltip */
+.stor-tooltip {
+  /* fixed (not absolute): an absolute tooltip parked deep down a tall page held
+     the document's scrollHeight open after navigating to a shorter page (you
+     could scroll into empty space until refresh). Fixed elements never extend
+     the scroll area. Positioned in viewport coords by _placeTooltip. */
+  position:fixed; pointer-events:none; z-index:9999;
+  background:var(--c-card); border:1px solid var(--c-border); border-radius:8px;
+  padding:9px 11px;
+  box-shadow:0 8px 24px rgba(0,0,0,.25), 0 2px 6px rgba(0,0,0,.08);
+  font-size:11px; color:var(--c-text);
+  opacity:0;
+  /* opacity fades quickly; left/top trail with a heavy ease so the tooltip
+     reads like it has mass — slight follow-lag instead of snap-to-cursor */
+  transition:
+    opacity .12s ease,
+    left  .18s var(--ease-out),
+    top   .18s var(--ease-out);
+  /* Positioned beside the cursor by _stdTooltipHandler (top-left anchor, no
+     centering transform) so it can sit left/right of the caret and stay in-bounds. */
+  min-width:130px;
+}
+html.dark .stor-tooltip { box-shadow:0 8px 28px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.3); }
+.stor-tt-title { font-weight:700; font-size:11px; color:var(--c-text); margin-bottom:5px; letter-spacing:.01em; }
+.stor-tt-line { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--c-muted); line-height:1.55; }
+.stor-tt-bullet { color:var(--c-accent); font-size:11px; line-height:1; flex-shrink:0; }
+
+@keyframes topoSlideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ── Shared interactive tiered graph (Topology + Network map) ─────────────── */
+.g-scroll { flex:1; width:100%; min-height:0; min-width:0; overflow:hidden; padding:24px 16px; position:relative; box-sizing:border-box; }
+.g-canvas { position:relative; display:flex; align-items:center; gap:60px; min-width:max-content; transform-origin:0 0; }
+.g-svg { position:absolute; inset:0; overflow:visible; pointer-events:none; width:100%; height:100%; z-index:0; }
+.g-tiers { position:relative; z-index:1; display:flex; align-items:center; gap:60px; }
+.g-tier { display:flex; flex-direction:column; align-items:center; flex-shrink:0; }
+.g-tier-lbl { font-size:10px; color:var(--c-muted); text-transform:uppercase; letter-spacing:.08em; font-weight:600; text-align:center; margin-bottom:10px; white-space:nowrap; }
+.g-tier-cnt { color:var(--c-dim); font-weight:500; letter-spacing:0; }
+.g-tier-cards { display:flex; gap:10px; align-items:stretch; }
+.g-card { position:relative; flex-shrink:0; width:200px; box-sizing:border-box; padding:8px 10px 8px 13px; overflow:hidden;
+  background:var(--c-card); border:1px solid var(--c-border); border-radius:8px;
+  transition:border-color .15s ease, box-shadow .15s ease, opacity .15s ease; }
+.g-card-accent { position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:8px 0 0 8px; }
+.g-card-top { display:flex; align-items:center; gap:5px; }
+.g-card-ico { display:inline-flex; flex-shrink:0; }
+.g-card-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.g-card-name { font-weight:600; font-size:13px; color:var(--c-text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.g-badge { font-size:9px; font-weight:700; letter-spacing:.03em; padding:1px 5px; border-radius:4px; flex-shrink:0; }
+.g-card-sub { font-size:10px; color:var(--c-muted); padding-left:19px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,monospace; margin-top:2px; }
+.g-card-stat { font-size:11px; color:var(--c-muted); padding-left:19px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+.g-edge { transition:opacity .15s ease, stroke-width .15s ease; }
+.g-empty { display:flex; align-items:center; justify-content:center; height:100%; min-height:160px; color:var(--c-muted); font-size:13px; text-align:center; padding:40px; }
+
+/* Node detail drawer (Topology) */
+.topo-drawer-ov { position:fixed; inset:0; z-index:120; pointer-events:auto; }
+.topo-drawer { position:absolute; top:0; right:0; bottom:0; width:360px; max-width:90vw; background:var(--c-card);
+  border-left:1px solid var(--c-border); overflow-y:auto; animation:topoSlideIn .22s var(--ease-out); }
+.topo-dr-hdr { display:flex; align-items:center; gap:8px; padding:14px 16px 12px; border-bottom:1px solid var(--c-border); }
+.topo-dr-ico { display:inline-flex; flex-shrink:0; }
+.topo-dr-title { flex:1; min-width:0; }
+.topo-dr-name { font-weight:600; color:var(--c-text); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.topo-dr-sub { font-size:10px; color:var(--c-muted); }
+.topo-dr-status { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--c-muted); text-transform:capitalize; flex-shrink:0; }
+.topo-dr-close { background:none; border:none; cursor:pointer; color:var(--c-muted); font-size:18px; line-height:1; padding:0; flex-shrink:0; }
+.topo-dr-body { padding:14px 16px; }
+.topo-dr-tbl { width:100%; border-collapse:collapse; }
+.topo-dr-k { padding:6px 12px 6px 0; color:var(--c-muted); font-size:11px; border-bottom:1px solid var(--c-border); white-space:nowrap; }
+.topo-dr-v { padding:6px 0; color:var(--c-text); font-family:ui-monospace,monospace; font-size:11px; border-bottom:1px solid var(--c-border); }
+.topo-dr-empty { font-size:12px; color:var(--c-muted); }
+.topo-dr-link { display:block; margin-top:16px; padding:7px 12px; border:1px solid; border-radius:6px; font-size:12px; text-decoration:none; text-align:center; }
+@media (max-width:767px) { .g-card { width:168px; } }
+</style>
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>

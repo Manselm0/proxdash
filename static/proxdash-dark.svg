@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ProxDash">
+  <!-- Dark-mode ProxDash mark: the light-mode tile inverted — dark tile with a
+       hairline edge, server bars in Proxmox orange. Same geometry as
+       proxdash.svg so the brand reads identically across themes. -->
+  <rect width="32" height="32" rx="7" fill="#1C1C21"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#ffffff" stroke-opacity="0.12"/>
+  <g fill="#E57000">
+    <rect x="7" y="7"    width="18" height="5" rx="1.6" opacity="0.98"/>
+    <rect x="7" y="13.5" width="18" height="5" rx="1.6" opacity="0.76"/>
+    <rect x="7" y="20"   width="18" height="5" rx="1.6" opacity="0.56"/>
+  </g>
+  <g fill="#141417">
+    <circle cx="10" cy="9.5"  r="1.05"/>
+    <circle cx="10" cy="16"   r="1.05"/>
+    <circle cx="10" cy="22.5" r="1.05"/>
+  </g>
+</svg>

@@ -1,0 +1,156 @@
+<div id="page-proxmox" class="page space-y-6">
+
+  <!-- Page header ─────────────────────────────────────────────────── -->
+  <header class="page-hdr">
+    <div class="page-hdr-row">
+      <h1 class="page-hdr-title">Compute</h1>
+    </div>
+    <p class="page-hdr-sub">Proxmox hosts, virtual machines, and LX containers across the cluster.</p>
+    <div class="page-hdr-meta" id="compute-hdr-meta">
+      <span class="page-hdr-meta-item">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        <b id="meta-nodes">–</b> hosts
+      </span>
+      <span class="page-hdr-meta-sep"></span>
+      <span class="page-hdr-meta-item">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <b id="meta-vms">–</b> VMs
+      </span>
+      <span class="page-hdr-meta-sep"></span>
+      <span class="page-hdr-meta-item">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        <b id="meta-lxcs">–</b> LXCs
+      </span>
+    </div>
+  </header>
+
+  <!-- Cluster CPU / RAM trend ─────────────────────────────────────── -->
+  <section>
+    <div class="sec-hdr">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="sec-hdr-title">Cluster</span>
+        <span class="sec-hdr-sub">CPU and memory over time — by node, VM or container</span>
+        <div class="sec-hdr-actions" onclick="event.stopPropagation()">
+          <div class="hist-range" id="px-scope-hist-range" role="group" aria-label="Scope" style="margin-left:0">
+            <button class="hist-btn active" data-v="nodes" onclick="_pxScopeSet(this,'nodes')">Nodes</button>
+            <button class="hist-btn" data-v="vms" onclick="_pxScopeSet(this,'vms')">VMs</button>
+            <button class="hist-btn" data-v="lxcs" onclick="_pxScopeSet(this,'lxcs')">LXCs</button>
+          </div>
+          <div class="hd-search-wrap" id="px-scope-filter" style="max-width:200px;min-width:120px">
+            <svg class="hd-search-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input class="hd-search" type="search" placeholder="Filter…" oninput="_pxScopeSearch(this.value)">
+          </div>
+          <div class="hist-range" id="px-hist-range">
+            <button class="hist-btn" onclick="histClick(this,'px')">1d</button>
+            <button class="hist-btn active" onclick="histClick(this,'px')">7d</button>
+            <button class="hist-btn" onclick="histClick(this,'px')">30d</button>
+            <button class="hist-btn" onclick="histClick(this,'px')">All</button>
+            <button class="hist-btn" onclick="histClick(this,'px')">Custom</button>
+          </div>
+        </div>
+      </div>
+      <div class="hd-card p-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <div class="sub-hdr">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/></svg>
+            <span class="sub-hdr-title">CPU</span>
+            <div class="sub-hdr-actions" id="px-cpu-legend"></div>
+          </div>
+          <div style="position:relative;height:200px"><canvas id="chart-proxmox"></canvas></div>
+        </div>
+        <div>
+          <div class="sub-hdr">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10v4M10 10v4M14 10v4M18 10v4"/></svg>
+            <span class="sub-hdr-title">Memory</span>
+            <div class="sub-hdr-actions" id="px-ram-legend"></div>
+          </div>
+          <div style="position:relative;height:200px"><canvas id="chart-proxmox-ram"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filter / sort toolbar — drives Hosts, VMs, and LXCs below.
+       Animated Status pill toggle (.hist-range) + icon-only Tag & Sort buttons
+       that go black-bg/white-icon when active, matching the pill. -->
+  <style>
+    /* Status filter keeps the canonical segmented-toggle geometry (native
+       .hist-range track + 4px/10px .hist-btn padding); the sibling search field
+       and icon buttons are sized down to the native pill height so the row lines up. */
+    /* Tag/Sort buttons use the shared .hd-tbtn / .hd-tbtn-badge / .hd-tbtn-chev
+       component (defined in index.html) — same as Activity's Filters/Columns. */
+    /* Toolbar + dropdowns are rendered from the shared search-toolbar component
+       (src/49-search-toolbar.js): the Tag/Sort dropdowns render into #cmp-controls
+       via _stDropdown → .hd-menu, identical to Activity's Filters/Columns. */
+  </style>
+  <div id="cmp-toolbar" class="hd-toolbar" style="margin-bottom:16px">
+    <div class="hd-toolbar-row">
+    <div class="hist-range" id="cmp-status-hist-range" role="group" aria-label="Status filter" style="margin-left:0">
+      <button class="hist-btn active" data-v="all" onclick="_cmpSetStatus(this,'all')">All</button>
+      <button class="hist-btn" data-v="running" onclick="_cmpSetStatus(this,'running')">Running</button>
+      <button class="hist-btn" data-v="stopped" onclick="_cmpSetStatus(this,'stopped')">Stopped</button>
+    </div>
+    <div class="hd-search-wrap" style="max-width:400px;min-width:200px;flex:1">
+      <svg class="hd-search-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="cmp-search" class="hd-search" type="search" placeholder="Search name, node, VMID, image, tag…" oninput="_cmpOnSearch(this.value)">
+      <button class="hd-search-clear" onclick="el('cmp-search').value='';_cmpOnSearch('')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div id="cmp-controls" style="display:contents"></div>
+    <div class="hist-range" id="cmp-view-hist-range" role="group" aria-label="View" style="margin-left:auto">
+      <button class="hist-btn" data-v="cards" onclick="_cmpSetView(this,'cards')">Cards</button>
+      <button class="hist-btn active" data-v="list" onclick="_cmpSetView(this,'list')">List</button>
+    </div>
+    </div>
+    <div id="cmp-chips" class="hd-chips" style="display:none"></div>
+  </div>
+
+  <!-- Hosts ───────────────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      <span class="sec-hdr-title">Hosts</span>
+      <span class="sec-hdr-sub">Physical Proxmox nodes</span>
+      <span class="sec-hdr-badge" id="badge-nodes">0</span>
+    </div>
+    <div class="hd-row-3" id="nodes-grid">
+      <div class="hd-card p-4 text-xs" style="color:var(--c-muted)">Loading nodes…</div>
+    </div>
+    <div id="cmp-hostlist" style="display:none"></div>
+  </section>
+
+  <!-- Virtual Machines ────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span class="sec-hdr-title">Virtual Machines</span>
+      <span class="sec-hdr-sub">KVM guests</span>
+      <span class="sec-hdr-badge" id="badge-vms">0</span>
+    </div>
+    <div class="hd-row-compact" id="vms-grid"></div>
+  </section>
+
+  <!-- LXC Containers ──────────────────────────────────────────────── -->
+  <section>
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+      <span class="sec-hdr-title">LXC Containers</span>
+      <span class="sec-hdr-sub">Lightweight Linux containers</span>
+      <span class="sec-hdr-badge" id="badge-lxcs">0</span>
+    </div>
+    <div class="hd-row-compact" id="lxcs-grid"></div>
+  </section>
+
+  <!-- Guests list view (VMs + LXCs, one sortable table) — shown when the View
+       toggle is set to List; the card sections above are hidden instead. -->
+  <section id="cmp-list-sec" style="display:none">
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span class="sec-hdr-title">Guests</span>
+      <span class="sec-hdr-sub">VMs &amp; containers — click a column to sort</span>
+      <span class="sec-hdr-badge" id="badge-guests">0</span>
+    </div>
+    <div class="hd-card" style="padding:0;overflow-x:auto" id="cmp-list-card"></div>
+  </section>
+
+</div>

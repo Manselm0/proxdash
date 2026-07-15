@@ -1,0 +1,149 @@
+<style>
+  /* ── Storage page ─────────────────────────────────────────────────────────
+     A fuller view of every Proxmox storage in the cluster, built from the live
+     px.storage snapshot. Shared stores first, then local — mirrors the topology
+     storage-lane grouping but as cards with usage bars, type, node coverage and
+     content types. Reuses the shared .hd-card / .bar / .sec-hdr / .sub-hdr. */
+  .stor-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; margin-top:4px; }
+  @media (max-width:520px){ .stor-grid{ grid-template-columns:1fr; } }
+
+  /* Inspector detail pane: charts stack on narrow screens. */
+  @media (max-width:900px){
+    .stor-detail .syn-nas-row{ grid-template-columns:1fr !important; }
+  }
+
+  .stor-card{ padding:15px 16px; display:flex; flex-direction:column; gap:9px; }
+  .stor-card-hdr{ display:flex; align-items:center; gap:8px; }
+  .stor-card-hdr>svg{ color:var(--c-muted); flex-shrink:0; }
+  .stor-card-name{ font-size:14px; font-weight:600; color:var(--c-text); flex:1; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stor-type-tag{ font-size:9px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+    padding:2px 6px; border-radius:5px; flex-shrink:0; background:var(--c-hover); color:var(--c-muted); }
+  .stor-dot{ width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+
+  .stor-card-meta{ display:flex; justify-content:space-between; align-items:baseline; font-size:12px; color:var(--c-muted); }
+  .stor-card-meta .stor-pct{ font-weight:700; }
+  .stor-card-free{ font-size:10.5px; color:var(--c-dim); margin-top:-4px; }
+
+  .stor-card-tags{ display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  .stor-scope{ font-size:9px; font-weight:700; letter-spacing:.05em; padding:2px 7px; border-radius:5px; flex-shrink:0; }
+  .stor-scope-shared{ background:rgba(var(--c-accent-rgb),.16); color:var(--c-accent); }
+  .stor-scope-local{ background:var(--c-hover); color:var(--c-muted); }
+  .stor-nodes{ font-size:11px; color:var(--c-dim); display:inline-flex; align-items:center; gap:5px; min-width:0; }
+  .stor-nodes .stor-nodes-names{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .stor-content{ display:flex; flex-wrap:wrap; gap:5px; border-top:1px solid var(--c-border); padding-top:9px; }
+  .stor-content-chip{ font-size:10px; color:var(--c-muted); background:var(--c-hover); border-radius:5px; padding:2px 7px; white-space:nowrap; }
+
+  .stor-msg{ color:var(--c-muted); font-size:13px; padding:24px 2px; }
+  .stor-lane-sub{ margin-top:14px; }
+
+  /* ── Store inspector ─────────────────────────────────────────────────────
+     Selector = the settings-page sliding-thumb pill control, scaled up: one
+     pill per store (lane icon · name · used-%). Detail below = the full
+     Ceph-anatomy body for the selected store. Pills scroll horizontally on
+     narrow screens (the .settings-pill-row behavior, for free). */
+  .stor-pill-row{ margin:2px 0 12px; }
+  #stor-sel-hist-range .hist-btn{ padding:9px 16px; font-size:13px; gap:8px; }
+  #stor-sel-hist-range .hist-btn svg{ width:15px; height:15px; }
+  .stor-pill-pc{ font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .stor-detail{ min-width:0; padding:14px 16px; }
+  @media (max-width:900px){
+    .stor-detail .syn-nas-row{ grid-template-columns:1fr !important; }
+  }
+
+  /* ── Space Hogs treemap ── */
+  #stor-hogs{ position:relative; height:280px; }
+  .hog-cell{ position:absolute; border-radius:4px; overflow:hidden; cursor:pointer;
+    display:flex; flex-direction:column; justify-content:flex-end; padding:5px 7px;
+    transition:filter .15s ease; }
+  .hog-cell:hover{ filter:brightness(1.35); }
+  .hog-nm{ font-size:10px; font-weight:600; color:var(--c-text); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; line-height:1.25; }
+  .hog-sz{ font-size:9px; color:var(--c-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* One-line short tiles: name (flex-clips) + size (never clips, always shown). */
+  .hog-line{ display:flex; align-items:baseline; gap:4px; min-width:0; }
+  .hog-nm-i{ flex:1 1 auto; min-width:0; }
+  .hog-sz-i{ flex:0 0 auto; white-space:nowrap; }
+  /* Narrow-but-tall volume tiles (e.g. a thin "+N smaller"): rotate the name to
+     read down the column so it stays labelled instead of clipping to nothing. */
+  .hog-nm-v{ position:absolute; top:6px; left:0; right:0; bottom:6px; padding:0 1px;
+    writing-mode:vertical-rl; text-orientation:mixed; text-align:left;
+    max-height:calc(100% - 12px); white-space:nowrap; }
+  .hog-store-lbl{ position:absolute; font-size:8.5px; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--c-muted); pointer-events:none; }
+  /* Drill-down: top-level store tiles invite a click; breadcrumb returns. */
+  .hog-store-tile{ cursor:pointer; }
+  .hog-crumb{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--c-muted); margin-bottom:10px; }
+  .hog-crumb .hog-crumb-back{ color:var(--c-accent); cursor:pointer; font-weight:600; }
+  .hog-crumb .hog-crumb-back:hover{ text-decoration:underline; }
+  .hog-crumb .hog-crumb-sep{ color:var(--c-dim); }
+  .hog-crumb .hog-crumb-sz{ color:var(--c-dim); }
+  #stor-hogs-legend{ display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-size:10.5px; color:var(--c-muted); }
+  #stor-hogs-legend i{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+
+  /* ── Drive Health bays ── */
+  .dh-node{ margin-bottom:14px; }
+  .dh-node:last-child{ margin-bottom:0; }
+  .dh-node-hdr{ display:flex; align-items:center; gap:7px; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--c-muted); margin-bottom:8px; }
+  .dh-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; }
+  /* Capacity Outlook ledger — same row anatomy as the Backups datastore ledger. */
+  .stor-ol-row{ display:grid; grid-template-columns:200px 1fr 140px 170px 165px; gap:14px;
+    align-items:center; padding:12px 16px; cursor:pointer; }
+  .stor-ol-row:hover{ background:var(--c-hover); }
+  .stor-ol-row + .stor-ol-row{ border-top:1px solid var(--c-border); }
+  .stor-ol-hdr{ display:grid; grid-template-columns:200px 1fr 140px 170px 165px; gap:14px;
+    padding:10px 16px 8px; border-bottom:1px solid var(--c-border); font-size:9px; font-weight:700;
+    letter-spacing:.07em; text-transform:uppercase; color:var(--c-dim); }
+
+  /* Drive tiles are the shared .stor-cell (see _driveCellHtml) — only the wear
+     "life tank" bar is section-specific. */
+  .dh-tank{ height:6px; border-radius:3px; background:var(--c-bar-bg); overflow:hidden; margin-top:6px; }
+  .dh-tank i{ display:block; height:100%; border-radius:3px; }
+</style>
+<div id="page-storage" class="page space-y-6">
+  <header class="page-hdr">
+    <div class="page-hdr-row">
+      <h1 class="page-hdr-title">Storage</h1>
+    </div>
+    <p class="page-hdr-sub">Every storage in the Proxmox cluster — how full, how fast it's filling, what's filling it, and the hardware under it.</p>
+    <div class="page-hdr-meta" id="storage-hdr-meta"></div>
+  </header>
+  <!-- Page flow: Capacity Outlook (the answers) → Store Inspector → Largest
+       Volumes treemap → Drive Health bays. All owned by renderStoragePage. -->
+  <section id="stor-outlook-sec" style="display:none">
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+      <h2 class="sec-hdr-title">Capacity Outlook</h2>
+      <span class="sec-hdr-sub">Trajectory, full-by and reachability per store — click a row to inspect</span>
+    </div>
+    <div class="hd-card" style="overflow-x:auto"><div id="stor-outlook" style="min-width:860px"></div></div>
+  </section>
+
+  <div id="storage-root">
+    <div class="stor-msg">Loading storage…</div>
+  </div>
+
+  <section id="stor-hogs-sec" style="display:none">
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="12"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="16.5" y1="12" x2="16.5" y2="21"/></svg>
+      <h2 class="sec-hdr-title">Largest Volumes</h2>
+      <span class="sec-hdr-sub">What's using the space, cluster-wide — tile area = bytes, click a store to drill into its volumes</span>
+    </div>
+    <div class="hd-card p-4">
+      <div id="stor-hogs-crumb" class="hog-crumb" style="display:none"></div>
+      <div id="stor-hogs"></div>
+      <div id="stor-hogs-legend"></div>
+    </div>
+  </section>
+
+  <section id="stor-drives-sec" style="display:none">
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
+      <h2 class="sec-hdr-title">Drive Health</h2>
+      <span class="sec-hdr-sub">Every physical disk behind the cluster, grouped by node — SMART, wear and Ceph OSD state</span>
+    </div>
+    <div class="hd-card p-4" id="stor-drivehealth"></div>
+  </section>
+</div>

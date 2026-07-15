@@ -1,0 +1,28 @@
+config.yaml
+__pycache__/
+*.pyc
+venv/
+.env
+
+# runtime data / secrets
+data/
+users.json
+sessions.json
+setup-token.txt
+*_session.json
+*_token.json
+*.db
+*.db-*
+config.yaml.bak*
+
+# real runtime configs (keep the *.example templates tracked)
+config/*.yaml
+!config/*.yaml.example
+
+# scratch/demo (not part of ProxDash)
+static/clearspark.html
+static/assets/
+static/button-demo.html
+static/sidebar-demo.html
+static/uikit.html
+static/carddemo.html

@@ -1,0 +1,87 @@
+<div id="page-tools" class="page space-y-6">
+  <header class="page-hdr">
+    <div class="page-hdr-row">
+      <h1 class="page-hdr-title">Tools</h1>
+    </div>
+    <p class="page-hdr-sub">On-demand network and diagnostics utilities.</p>
+  </header>
+
+  <section>
+    <div class="sec-hdr">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      <h2 class="sec-hdr-title">Utilities</h2>
+      <span class="sec-hdr-sub">Pick options and run</span>
+    </div>
+    <div class="hd-row-3" id="tools-grid">
+
+      <!-- Reachability / ping -->
+      <div class="hd-card p-4">
+        <div class="tool-card-hdr">
+          <span class="tch-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span>
+          <span class="tch-t">Reachability</span>
+        </div>
+        <p style="font-size:12px;color:var(--c-muted);margin-bottom:10px">DNS resolve + TCP connect latency to a host:port (ping / port check).</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <label class="tool-field"><span>Target</span><input id="netcheck-target" class="tool-select" type="text" placeholder="1.1.1.1:443 or example.com" value="1.1.1.1:443"></label>
+        </div>
+        <div id="tool-netcheck-result" style="min-height:64px;margin-bottom:12px"><span style="font-size:12px;color:var(--c-dim)">Not run yet.</span></div>
+        <button onclick="runNetcheck(this)" class="tool-run"><span class="tr-run"><span class="orb-scene"><span class="planet"></span><span class="spin"><span class="sat"></span></span></span><span class="tr-t">Checking…</span></span><span class="tr-idle">Check</span></button>
+      </div>
+
+      <!-- Wake-on-LAN -->
+      <div class="hd-card p-4">
+        <div class="tool-card-hdr">
+          <span class="tch-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span>
+          <span class="tch-t">Wake-on-LAN</span>
+        </div>
+        <p style="font-size:12px;color:var(--c-muted);margin-bottom:10px">Send a magic packet to power on a device by MAC address.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <label class="tool-field"><span>Device</span><select id="wol-device" class="tool-select" onchange="_wolPick(this)"><option value="">— manual —</option></select></label>
+          <label class="tool-field"><span>MAC</span><input id="wol-mac" class="tool-select" type="text" placeholder="AA:BB:CC:DD:EE:FF"></label>
+        </div>
+        <div id="tool-wol-result" style="min-height:48px;margin-bottom:12px"><span style="font-size:12px;color:var(--c-dim)">Not sent yet.</span></div>
+        <button onclick="runWol(this)" class="tool-run"><span class="tr-run"><span class="orb-scene"><span class="planet"></span><span class="spin"><span class="sat"></span></span></span><span class="tr-t">Sending…</span></span><span class="tr-idle">Send magic packet</span></button>
+      </div>
+
+      <!-- Traceroute -->
+      <div class="hd-card p-4">
+        <div class="tool-card-hdr">
+          <span class="tch-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg></span>
+          <span class="tch-t">Traceroute</span>
+        </div>
+        <p style="font-size:12px;color:var(--c-muted);margin-bottom:10px">Hop-by-hop network path and per-hop latency to a host (from ProxDash).</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <label class="tool-field"><span>Target</span><input id="trace-target" class="tool-select" type="text" placeholder="8.8.8.8 or example.com" value="1.1.1.1"></label>
+        </div>
+        <div id="tool-trace-result" style="min-height:64px;margin-bottom:12px"><span style="font-size:12px;color:var(--c-dim)">Not run yet.</span></div>
+        <button onclick="runTraceroute(this)" class="tool-run"><span class="tr-run"><span class="orb-scene"><span class="planet"></span><span class="spin"><span class="sat"></span></span></span><span class="tr-t">Tracing…</span></span><span class="tr-idle">Trace route</span></button>
+      </div>
+
+      <!-- Certificate expiry -->
+      <div class="hd-card p-4">
+        <div class="tool-card-hdr">
+          <span class="tch-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="tch-t">Cert Expiry</span>
+        </div>
+        <p style="font-size:12px;color:var(--c-muted);margin-bottom:10px">TLS certificate issuer and days until expiry for a domain.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <label class="tool-field"><span>Domain</span><input id="cert-target" class="tool-select" type="text" placeholder="host[:port]"></label>
+        </div>
+        <div id="tool-cert-result" style="min-height:64px;margin-bottom:12px"><span style="font-size:12px;color:var(--c-dim)">Not run yet.</span></div>
+        <button onclick="runCertCheck(this)" class="tool-run"><span class="tr-run"><span class="orb-scene"><span class="planet"></span><span class="spin"><span class="sat"></span></span></span><span class="tr-t">Checking…</span></span><span class="tr-idle">Check cert</span></button>
+      </div>
+
+      <!-- Import history (Proxmox RRD backfill) -->
+      <div class="hd-card p-4">
+        <div class="tool-card-hdr">
+          <span class="tch-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+          <span class="tch-t">Import History</span>
+        </div>
+        <p style="font-size:12px;color:var(--c-muted);margin-bottom:10px">Pull up to a year of node, guest, and storage metrics from Proxmox's built-in RRD archives into ProxDash's charts and forecasts. Runs automatically on first launch; run again to fill older gaps. Only history older than what's already recorded is imported.</p>
+        <div id="tool-import-result" style="min-height:64px;margin-bottom:12px"><span style="font-size:12px;color:var(--c-dim)">Not run yet.</span></div>
+        <button onclick="runHistoryImport(this)" class="tool-run"><span class="tr-run"><span class="orb-scene"><span class="planet"></span><span class="spin"><span class="sat"></span></span></span><span class="tr-t" id="tool-import-phase">Importing…</span></span><span class="tr-idle">Import history</span></button>
+      </div>
+
+    </div>
+  </section>
+</div>

@@ -1,0 +1,75 @@
+# ProxDash Configuration
+# Copy this file to config.yaml and fill in your values.
+# After editing, hit /api/reload-config or restart the service.
+
+title: "Proxdash"
+poll_interval: 10   # seconds between data refreshes
+
+# ─── Demo mode ──────────────────────────────────────────────────────────────
+# Set demo: true to run ProxDash on a self-contained synthetic Proxmox cluster
+# with no real API connection — for screenshots, a public live demo, or an
+# offline trial. The stats DB is seeded with synthetic history on startup so
+# every chart and the uptime heatmap are populated immediately, and a "DEMO"
+# badge appears in the sidebar. Leave false (or omit) for real deployments.
+demo: false
+
+# ─── Authentication ─────────────────────────────────────────────────────────
+# IMPORTANT: if this block is missing, auth defaults to ENABLED (fail-closed) —
+# a publicly-exposed dashboard must require login. On first run, retrieve the
+# one-time setup token from the startup log/data directory and use it to create
+# the local admin. Set enabled:false ONLY for a
+# trusted-LAN-only deployment where everyone on the network is allowed in.
+auth:
+  enabled: true
+  session_ttl_days: 7
+  # Set true when HTTPS terminates at a reverse proxy that does not pass a
+  # trusted forwarded scheme. Do not enable for a direct http:// connection.
+  cookie_secure: false
+
+# ─── Proxmox ──────────────────────────────────────────────────────────────
+proxmox:
+  enabled: false
+  url: "https://192.168.1.X:8006/api2/json"
+  # Create an API token: Datacenter → Permissions → API Tokens
+  # token_id format: "user@pam!tokenname"; grant it PVEAuditor on path "/".
+  token_id: "root@pam!proxdash"
+  token_secret: "REPLACE_WITH_PROXMOX_TOKEN_SECRET"
+
+# ─── Proxmox Backup Server ──────────────────────────────────────────────────
+# Backups page: datastore usage + snapshot list from PBS.
+# Create an API token in the PBS UI (Access Control → API Token) and grant it
+# read access to the datastore(s). token_id format: "user@realm!tokenname".
+pbs:
+  enabled: false
+  url: "https://192.168.1.X:8007"
+  token_id: "root@pam!proxdash"
+  token_secret: "REPLACE_WITH_PBS_TOKEN_SECRET"
+
+# ─── Health Checks ────────────────────────────────────────────────────────
+# Optional custom HTTP checks — anything returning < 500 counts as up, no auth
+# required. The Health page already covers the cluster (nodes, quorum, storage,
+# Ceph, PBS) automatically with zero config; add entries here only for EXTRA
+# services you want probed alongside.
+health_checks:
+  enabled: true
+  services: []
+    # One entry per extra service, e.g.:
+    # - name: "Home Assistant"
+    #   url: "http://192.168.1.X:8123"
+
+# ─── Tools (Wake-on-LAN) ────────────────────────
+# Optional named Wake-on-LAN devices for the Tools page's device picker.
+tools:
+  wol_devices: []
+    # - name: "Desktop"
+    #   mac: "AA:BB:CC:DD:EE:FF"
+
+# ─── AI Assistant (TARS) ─────────────────────────────────────────────────────
+# Optional in-dashboard AI chat assistant. You supply your own Anthropic API
+# key (console.anthropic.com); nothing is sent anywhere else. Omit this whole
+# block to disable the assistant. The config key must stay `tars`.
+tars:
+  api_key: ""
+  model: "claude-sonnet-4-6"
+  max_tokens: 2048
+  thinking_budget: 1200

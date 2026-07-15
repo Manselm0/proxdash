@@ -1,0 +1,50 @@
+<div id="page-settings" class="page space-y-6">
+  <header class="page-hdr">
+    <div class="page-hdr-row">
+      <h1 class="page-hdr-title">Settings</h1>
+    </div>
+    <p class="page-hdr-sub">Manage integrations, credentials, and dashboard preferences.</p>
+  </header>
+
+  <section>
+    <div class="settings-shell">
+      <!-- Section pill toggle — same sliding-thumb segmented control used by
+           the history-range controls. -->
+      <div class="settings-pill-row">
+      <div class="hist-range" id="set-section-hist-range" role="tablist" aria-label="Settings sections">
+        <button class="hist-btn active" id="snav-general"        onclick="switchSettingsTab('general',this)" role="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          General
+        </button>
+        <button class="hist-btn" id="snav-infrastructure" onclick="switchSettingsTab('infrastructure',this)" role="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          Proxmox
+        </button>
+        <button class="hist-btn" id="snav-health" onclick="switchSettingsTab('health',this)" role="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Health
+        </button>
+        <button class="hist-btn" id="snav-assistant" onclick="switchSettingsTab('assistant',this)" role="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Assistant
+        </button>
+      </div>
+      </div>
+
+      <!-- Section content -->
+      <div class="settings-content hd-card">
+        <div id="stab-panel-general"></div>
+        <div id="stab-panel-infrastructure" class="hidden"></div>
+        <div id="stab-panel-health"         class="hidden"></div>
+        <div id="stab-panel-assistant"      class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- Sticky save bar -->
+    <div class="settings-save-bar">
+      <span id="settings-save-status" style="color:var(--c-muted);font-size:13px"></span>
+      <span style="flex:1"></span>
+      <button id="settings-save-btn" onclick="saveSettings()" class="btn-primary">Save &amp; Apply</button>
+    </div>
+  </section>
+</div>
