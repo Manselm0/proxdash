@@ -193,7 +193,7 @@ function _cmpRenderList(px, show) {
   }).join('');
   card.innerHTML = '<table style="width:100%;border-collapse:collapse;min-width:720px">'
     + '<thead><tr>' + th('name', 'Name') + th('type', 'Type') + th('node', 'Node') + th('status', 'Status')
-    + th('cpu', 'CPU', 'right') + th('ram', 'RAM', 'right') + th('disk', 'Disk', 'right') + th('uptime', 'Uptime')
+    + th('cpu', 'CPU') + th('ram', 'RAM') + th('disk', 'Disk') + th('uptime', 'Uptime')
     + '</tr></thead><tbody>' + (body || '<tr><td colspan="8" style="padding:14px;color:var(--c-muted)">No guests match.</td></tr>') + '</tbody></table>';
 }
 function _cmpOnSearch(v) {
