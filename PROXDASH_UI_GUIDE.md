@@ -230,6 +230,18 @@ Same system as HomeDash: stagger `fade-in` intros (~35ms step), `scale-in`/
 via the shared `@media (hover:none)` block, tokenized easings, never
 `transition:all`. Dark mode = `.dark` on `<html>`, persisted (`hd-dark`).
 
+**Sidebar nav-icon motion** (`.nav-icon-run`, per-icon `@keyframes nav-*` in
+`static/index.html`) plays on click only — an actual inactive → active nav
+transition fired from `src/10-router.js`'s `_activatePages` (covers mouse click,
+Enter/Space, and touch tap uniformly, since it triggers on the resulting page
+change, not the input event). It does **not** play on hover, touch-down, or
+keyboard focus alone — those fire far too often for a sidebar item to justify
+replaying an animation each time (see the Animation Decision Framework: tens-of-
+times-a-day interactions get reduced/no motion). Re-clicking an already-active
+item does not replay it either, guarded by the `wasActive` check in `_activatePages`.
+`_navIconPlay` (in `src/60-app-core.js`) throttles rapid re-fires and respects
+`prefers-reduced-motion`.
+
 ## 8. Quick Reference
 
 | Thing | Value |
