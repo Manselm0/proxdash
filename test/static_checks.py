@@ -123,10 +123,15 @@ def check_sidebar_icon_motion() -> None:
     if missing_shell:
         raise AssertionError("sidebar icon motion CSS/markup is missing: " + ", ".join(missing_shell))
 
-    required_wiring = ("_navIconPlay", "_navIconWire", "pointerenter", "pointerdown", "'focus'")
-    missing_wiring = [marker for marker in required_wiring if marker not in app_core]
-    if missing_wiring:
-        raise AssertionError("sidebar icon input wiring is missing: " + ", ".join(missing_wiring))
+    if "_navIconPlay" not in app_core:
+        raise AssertionError("sidebar icon motion helper _navIconPlay is missing")
+    banned_wiring = ("_navIconWire", "pointerenter", "pointerdown", "'focus'")
+    present_banned = [marker for marker in banned_wiring if marker in app_core]
+    if present_banned:
+        raise AssertionError(
+            "sidebar icon animation must only play on click, not hover/touch/focus: "
+            + ", ".join(present_banned)
+        )
     if "!wasActive && typeof _navIconPlay==='function'" not in router:
         raise AssertionError("sidebar route activation must only animate inactive -> active transitions")
 
