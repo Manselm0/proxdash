@@ -321,10 +321,9 @@ function _navRailWire(){
   });
 }
 
-// Reusable sidebar icon motion: hover for pointer users, focus for keyboard
-// users, a touch-down cue on mobile, and inactive -> active transitions from
-// the router. A short throttle coalesces pointer/focus/click events from the same
-// interaction, while removing the class first lets a later hover replay cleanly.
+// Reusable sidebar icon motion: plays only on an actual inactive -> active
+// nav transition (click, Enter/Space, or tap — whatever input method causes
+// the page to change), never on hover/focus alone. See src/10-router.js.
 function _navMotionReduced(){
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
   catch(e) { return false; }
@@ -342,19 +341,6 @@ function _navIconPlay(btn){
     btn.classList.remove('nav-icon-run');
     btn._navIconTimer=null;
   },820);
-}
-function _navIconWire(){
-  const s=el('sidebar'); if(!s||s._iconWired) return; s._iconWired=true;
-  s.querySelectorAll('[data-sidebar="menu-button"]').forEach(b=>{
-    if(!b.querySelector('.nav-ico')) return;
-    b.addEventListener('pointerenter',ev=>{
-      if(ev.pointerType==='mouse'||ev.pointerType==='pen') _navIconPlay(b);
-    });
-    b.addEventListener('pointerdown',ev=>{
-      if(ev.pointerType==='touch') _navIconPlay(b);
-    });
-    b.addEventListener('focus',()=>_navIconPlay(b));
-  });
 }
 
 // Script is at bottom of body — DOM is fully available, no DOMContentLoaded needed
@@ -389,7 +375,6 @@ function _navIconWire(){
     showPage(target, {fromPopstate:true});
   });
   _navRailWire();   // attach rail flyout hover handlers to the static nav buttons
-  _navIconWire();   // animate nav pictograms across pointer, touch, and keyboard input
   _wireLogoutPost();
   if(window.innerWidth<768){const s=el('sidebar');if(s)s.style.transform='translateX(-100%)';_sidebarOpen=false;}
   else if(localStorage.getItem('hd-sidebar-collapsed')==='1'){sidebarRail();}
