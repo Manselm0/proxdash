@@ -86,7 +86,8 @@ async function loadPxNetHistory(hrs) {
     _makeChart('chart-pxnet-out', outDs, fmt, hrs, { legendTarget: 'pxnet-out-legend' });
     _wireChartHover('chart-pxnet-in');
     _wireChartHover('chart-pxnet-out');
-    // The composition chart follows the same range pill (capped at its 7d table).
+    // The composition chart follows the same range pill (guest history now
+    // shares the nodes' 400d tiered retention, so no separate cap here).
     loadNetComposition(hrs);
   } catch(e) { console.warn('pxnet history:', e); }
 }
@@ -209,8 +210,7 @@ function _netCompOnSearch(v){
 async function loadNetComposition(hrs){
   try {
     if (!el('chart-netcomp')) return;
-    const h = Math.min(Number(hrs) || 24, 168);
-    const d = await _swrJSON(`/api/history/guest_net?hours=${h}`, () => loadNetComposition(h));
+    const d = await _swrJSON(`/api/history/guest_net?hours=${hrs}`, () => loadNetComposition(hrs));
     const guests = (d && d.guests) || {};
     const meta = {};
     (((window._pxLast||{}).vms)||[]).concat(((window._pxLast||{}).lxcs)||[])
@@ -254,7 +254,7 @@ async function loadNetComposition(hrs){
       borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, tension: 0.3,
       fill: true, spanGaps: true,
     });
-    _makeChart('chart-netcomp', ds, v => fmtBytes(v)+'/s', h,
+    _makeChart('chart-netcomp', ds, v => fmtBytes(v)+'/s', hrs,
       { stacked: true, legendTarget: 'netcomp-legend' });
     _wireChartHover('chart-netcomp');
   } catch(e){ console.warn('net composition:', e); }

@@ -121,8 +121,10 @@ def _init_db():
                 ts REAL NOT NULL, storage TEXT NOT NULL,
                 read_bps REAL DEFAULT 0, write_bps REAL DEFAULT 0
             );
-            -- Per-guest network rates (bytes/sec), ~60s samples kept 7d — feeds
-            -- the Network page's traffic composition + guest sparklines.
+            -- Per-guest network rates (bytes/sec), ~60s samples — feeds the
+            -- Network page's traffic composition + guest sparklines. Same
+            -- tiered retention as the node tables: full resolution for 30
+            -- days, then compacted to hourly and kept 400 days.
             CREATE TABLE IF NOT EXISTS guest_net_stats (
                 ts REAL NOT NULL, vmid TEXT NOT NULL,
                 in_bps REAL DEFAULT 0, out_bps REAL DEFAULT 0
@@ -136,8 +138,10 @@ def _init_db():
             CREATE INDEX IF NOT EXISTS idx_guestnet_ts ON guest_net_stats(ts);
             -- Small key/value store: import markers, one-shot flags.
             CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT);
-            -- Per-guest cpu/mem history for the detail-drawer mini-graph.
-            -- kind='guest', eid=vmid. Downsampled (~60s) and pruned at 7d;
+            -- Per-guest cpu/mem history for the detail-drawer mini-graph and
+            -- the Compute page's per-node guest drilldown. kind='guest',
+            -- eid=vmid. Downsampled (~60s); same tiered retention as the node
+            -- tables (30d full resolution, then hourly-compacted to 400d) —
             -- nodes use proxmox_stats instead.
             CREATE TABLE IF NOT EXISTS entity_stats (
                 ts REAL NOT NULL, kind TEXT NOT NULL, eid TEXT NOT NULL,
@@ -303,13 +307,13 @@ def _record_stats(data: dict):
                 cutoff = ts - 30 * 86400
                 for tbl in ("ceph_stats", "health_stats"):
                     conn.execute(f"DELETE FROM {tbl} WHERE ts < ?", (cutoff,))
-                conn.execute("DELETE FROM entity_stats WHERE ts < ?", (ts - 7 * 86400,))
-                conn.execute("DELETE FROM guest_net_stats WHERE ts < ?", (ts - 7 * 86400,))
-                # Tiered retention for the Proxmox history tables: full 10s
-                # resolution for 30 days, then COMPACT to one row per hour per
-                # series and keep those 400 days. This is what lets the RRD
-                # history import (up to a year, coarse) coexist with live data.
-                for tbl, grp in (("proxmox_stats", "node"), ("proxmox_net_stats", "node"), ("pxstorage_io", "storage")):
+                # Tiered retention for the Proxmox + guest history tables: full
+                # 10s/60s resolution for 30 days, then COMPACT to one row per
+                # hour per series and keep those 400 days. This is what lets
+                # the RRD history import (up to a year, coarse) coexist with
+                # live data — guests get the same long runway as nodes.
+                for tbl, grp in (("proxmox_stats", "node"), ("proxmox_net_stats", "node"), ("pxstorage_io", "storage"),
+                                 ("entity_stats", "kind, eid"), ("guest_net_stats", "vmid")):
                     conn.execute(
                         f"DELETE FROM {tbl} WHERE ts < ? AND rowid NOT IN ("
                         f"SELECT MIN(rowid) FROM {tbl} WHERE ts < ? GROUP BY {grp}, CAST(ts/3600 AS INTEGER))",
@@ -2734,8 +2738,7 @@ async def _rrd_backfill(auto: bool = False):
             cut = {t: _earliest(t) for t in
                    ("proxmox_stats", "proxmox_net_stats", "pxstorage_stats", "entity_stats",
                     "pxstorage_io", "guest_net_stats")}
-        floor_ts = now - 400 * 86400          # matches retention
-        entity_floor = now - 7 * 86400        # entity_stats / guest_net_stats keep only 7d
+        floor_ts = now - 400 * 86400          # matches retention (nodes and guests alike)
         ins = {"proxmox_stats": 0, "proxmox_net_stats": 0, "pxstorage_stats": 0,
                "entity_stats": 0, "pxstorage_io": 0, "guest_net_stats": 0}
 
@@ -2797,8 +2800,9 @@ async def _rrd_backfill(auto: bool = False):
                                      (t, st, nd, sh, row.get("used") or 0, row.get("total") or 0))
                         ins["pxstorage_stats"] += 1
 
-        # Guests: cpu/mem (entity drawer, 7d window) + disk I/O attributed to
-        # each guest's backing storage(s) — same split as the live recorder.
+        # Guests: cpu/mem (entity drawer + Compute page drilldown, same 400d
+        # runway as nodes) + disk I/O attributed to each guest's backing
+        # storage(s) — same split as the live recorder.
         gs_disks = _guest_netcfg_cache.get("disks") or {}
         io_acc: dict = {}   # storage -> {ts: [read, write]}
         done = 0
@@ -2813,13 +2817,13 @@ async def _rrd_backfill(auto: bool = False):
                     for t, row in series.items():
                         if t < floor_ts:
                             continue
-                        if entity_floor <= t < cut["entity_stats"] and row.get("cpu") is not None:
+                        if t < cut["entity_stats"] and row.get("cpu") is not None:
                             mm = row.get("maxmem") or 0
                             conn.execute("INSERT INTO entity_stats(ts,kind,eid,cpu_pct,mem_pct) VALUES(?,?,?,?,?)",
                                          (t, "guest", str(g.get("vmid")), round((row.get("cpu") or 0) * 100, 1),
                                           round((row.get("mem") or 0) / mm * 100, 1) if mm else 0))
                             ins["entity_stats"] += 1
-                        if entity_floor <= t < cut["guest_net_stats"] and (row.get("netin") is not None or row.get("netout") is not None):
+                        if t < cut["guest_net_stats"] and (row.get("netin") is not None or row.get("netout") is not None):
                             conn.execute("INSERT INTO guest_net_stats(ts,vmid,in_bps,out_bps) VALUES(?,?,?,?)",
                                          (t, str(g.get("vmid")), round(row.get("netin") or 0), round(row.get("netout") or 0)))
                             ins["guest_net_stats"] += 1
@@ -3561,7 +3565,6 @@ async def history_proxmox_net(hours: int = 24):
 @app.get("/api/history/guest_net")
 async def history_guest_net(hours: int = 24):
     """Per-guest network rate history (Network page composition + sparklines)."""
-    hours = max(1, min(hours, 7 * 24))   # table keeps 7d
     cutoff = time.time() - hours * 3600
     b = _bucket_secs(hours)
     with _db() as conn:
@@ -3585,7 +3588,6 @@ async def history_entity_bulk(kind: str = "guest", hours: int = 24):
     """Bulk per-entity CPU/mem history (Compute page resource-composition chart).
     One call returns every entity of `kind`, mirroring /api/history/guest_net.
     Response: {entities: {eid: {labels[], cpu[], mem[]}}}."""
-    hours = max(1, min(hours, 7 * 24))   # entity_stats keeps 7d
     cutoff = time.time() - hours * 3600
     b = _bucket_secs(hours)
     with _db() as conn:

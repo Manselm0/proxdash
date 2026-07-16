@@ -243,8 +243,7 @@ async function _loadPxNodeDrilldown(hrs, ids, nodeName) {
     if (!wantCpu && !wantRam) return;
     const d = await _swrJSON(`/api/history/proxmox?hours=${hrs}`, () => loadPxHistory(hrs, ids));
     const nd = d.nodes && d.nodes[nodeName];
-    const h = Math.min(Number(hrs) || 24, 168);   // guest history keeps 7d
-    const gd = await _swrJSON(`/api/history/entity_bulk?kind=guest&hours=${h}`, () => _loadPxNodeDrilldown(h, ids, nodeName));
+    const gd = await _swrJSON(`/api/history/entity_bulk?kind=guest&hours=${hrs}`, () => _loadPxNodeDrilldown(hrs, ids, nodeName));
     const px = window._pxLast || {};
     const ents = (gd && gd.entities) || {};
     const meta = {}; (px.vms || []).concat(px.lxcs || []).forEach(g => meta[String(g.vmid)] = g);

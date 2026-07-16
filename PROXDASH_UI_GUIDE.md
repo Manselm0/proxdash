@@ -229,6 +229,10 @@ identical:
   its guests' (VMs + LXCs) top-CPU-consumer lines in the same CPU/RAM chart pair —
   so a node's spike is traceable to the guest driving it. The filter box doubles
   as a node-name filter under "All" and a guest-name filter once a node is picked.
+  Guest history (`entity_stats`/`guest_net_stats` in `main.py`) shares the nodes'
+  tiered retention — 30 days full resolution, then compacted to hourly and kept
+  400 days — so this drilldown and the Network composition chart both have real
+  runway at 30d/All, not just the last 7 days.
 
 ## 7. Animation & Interaction
 
