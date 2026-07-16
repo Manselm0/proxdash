@@ -221,6 +221,14 @@ identical:
 - **Intro** — the left-to-right reveal sweep (`_revealChart`/`_maybeReveal`, 1100ms,
   respects `prefers-reduced-motion`). Not fade, not baseline-rise.
 - Rate formatting `fmtBytes(v)+'/s'`; percent charts pin `yMin:0, yMax:100`.
+- **Compute page Cluster scope** — `#px-scope-hist-range` is rendered dynamically
+  (`_pxScopeRenderButtons()` in `src/26-compute.js`): "All" + one button per live
+  node, never hardcoded (portability rule). "All" plots every node's line
+  (`loadPxHistory`); picking a single node calls `_loadPxNodeDrilldown`
+  (`src/65-time-range.js`), which plots that node's own line (accent colour) plus
+  its guests' (VMs + LXCs) top-CPU-consumer lines in the same CPU/RAM chart pair —
+  so a node's spike is traceable to the guest driving it. The filter box doubles
+  as a node-name filter under "All" and a guest-name filter once a node is picked.
 
 ## 7. Animation & Interaction
 

@@ -2425,6 +2425,7 @@ function _cmpApply() {
   _cmpRenderChips();
   const d = window._lastData; if (!d || !d.proxmox) return;
   const px = d.proxmox;
+  _pxScopeRenderButtons();
   // Type filter (empty = all): hide the sections whose kind isn't selected.
   const kf = window._cmp.types, show = k => !kf.length || kf.includes(k);
   const list = window._cmp.view === 'list';
@@ -2630,6 +2631,7 @@ function _cmpInit() {
     requestAnimationFrame(() => _histThumbUpdate('cmp-status'));
   }
   // Position the sliding thumbs for the Cluster scope + view toggles too.
+  _pxScopeRenderButtons();
   requestAnimationFrame(() => { _histThumbUpdate('px-scope'); _histThumbUpdate('cmp-view'); });
   _cmpRenderControls();
   _cmpRenderChips();
@@ -2646,13 +2648,33 @@ function _cmpInit() {
 }
 
 // ── Cluster chart scope (Compute page) ──────────────────────────────────────
-// Toggle the Cluster CPU + RAM line charts between per-node and per-guest
-// (VMs / LXCs) series. The actual loading lives in loadPxHistory /
-// _loadPxGuestHistory (src/65-time-range.js); here we just hold the state and
-// re-trigger a load on toggle. The filter box is only useful for guest scopes,
-// so it's hidden for Nodes.
-window._pxScope = window._pxScope || { scope: 'nodes', search: '' };
+// Toggle the Cluster CPU + RAM line charts between "All" (every node, the old
+// default) and a single node. The actual loading lives in loadPxHistory /
+// _loadPxNodeDrilldown (src/65-time-range.js); here we just hold the state,
+// render the scope buttons, and re-trigger a load on toggle. Picking a single
+// node also pulls in that node's own guests (VMs + LXCs) in the drilldown, so
+// the filter box doubles as a node-name filter under "All" and a guest-name
+// filter once a node is selected.
+window._pxScope = window._pxScope || { scope: 'all', search: '' };
 let _pxScopeTimer = null;
+// Never hardcode node names (portability rule) — read them from live data.
+function _pxScopeNodeNames() {
+  const px = window._lastData && window._lastData.proxmox;
+  return ((px && px.nodes) || []).map(n => n.node).filter(Boolean);
+}
+// Rebuilds only when the live node set actually changes, so a poll tick
+// doesn't tear down the buttons (and the user's selection) every few seconds.
+function _pxScopeRenderButtons() {
+  const range = el('px-scope-hist-range'); if (!range) return;
+  const names = _pxScopeNodeNames();
+  const sig = names.join(',');
+  if (range.dataset.pxSig === sig && range.querySelector('.hist-btn')) return;
+  range.dataset.pxSig = sig;
+  if (window._pxScope.scope !== 'all' && !names.includes(window._pxScope.scope)) window._pxScope.scope = 'all';
+  const btn = (v, label) => `<button class="hist-btn${window._pxScope.scope === v ? ' active' : ''}" data-v="${esc(v)}" onclick="_pxScopeSet(this,'${esc(v)}')">${esc(label)}</button>`;
+  range.innerHTML = btn('all', 'All') + names.map(n => btn(n, n)).join('');
+  requestAnimationFrame(() => _histThumbUpdate('px-scope'));
+}
 function _pxScopeSet(btn, val) {
   window._pxScope.scope = val;
   const p = btn.closest('.hist-range');
@@ -6808,10 +6830,11 @@ async function loadPxHistory(hrs, ids) {
   if (hrs === undefined) hrs = _histGetHours('px');
   const isCluster = !ids;   // the Compute page's Cluster charts (Overview passes its own ids)
   ids = ids || { cpu:'chart-proxmox', ram:'chart-proxmox-ram', cpuLeg:'px-cpu-legend', ramLeg:'px-ram-legend' };
-  // Scope toggle (Compute page only): Nodes shows per-node lines; VMs/LXCs show
-  // per-guest lines from the bulk entity route. Same CPU + RAM chart pair either way.
-  const scope = (isCluster && window._pxScope && window._pxScope.scope) || 'nodes';
-  if (isCluster && (scope === 'vms' || scope === 'lxcs')) return _loadPxGuestHistory(hrs, ids, scope);
+  // Scope toggle (Compute page only): "All" shows every node's line; picking a
+  // single node drills into that node's own line plus its guests. Same CPU +
+  // RAM chart pair either way.
+  const scope = (isCluster && window._pxScope && window._pxScope.scope) || 'all';
+  if (isCluster && scope !== 'all') return _loadPxNodeDrilldown(hrs, ids, scope);
   try {
     const d = await _swrJSON(`/api/history/proxmox?hours=${hrs}`, () => loadPxHistory(hrs, ids));
     const wantCpu = ids.cpu && el(ids.cpu), wantRam = ids.ram && el(ids.ram),
@@ -6853,49 +6876,56 @@ async function loadPxHistory(hrs, ids) {
   } catch(e) { console.warn('px history:', e); }
 }
 
-// Per-guest CPU + RAM line history for the Compute Cluster charts when the scope
-// toggle is VMs or LXCs. One bulk fetch carries both metrics; the CPU chart plots
-// each guest's cpu series, the RAM chart its mem series — same top-N guest set in
-// both so a guest's CPU and RAM read side by side. Selection = top consumers by
-// current CPU; colour order is by VMID so a guest keeps its colour as ranks move.
-async function _loadPxGuestHistory(hrs, ids, scope) {
+// Single-node drill-down for the Compute Cluster charts: the selected node's
+// own CPU/RAM line (accent colour, so it always reads as "the node") plus its
+// guests' lines (VMs + LXCs together, top consumers by current CPU) — so you
+// can see what's pushing that node's usage up. One node-history fetch (same
+// route the "All" scope uses) + one guest bulk fetch, same CPU + RAM chart
+// pair either way. Colour order among guests is by VMID for stable per-guest
+// colours as ranks move; the filter box searches guest name/vmid/tags.
+async function _loadPxNodeDrilldown(hrs, ids, nodeName) {
   try {
     const wantCpu = ids.cpu && el(ids.cpu), wantRam = ids.ram && el(ids.ram);
     if (!wantCpu && !wantRam) return;
+    const d = await _swrJSON(`/api/history/proxmox?hours=${hrs}`, () => loadPxHistory(hrs, ids));
+    const nd = d.nodes && d.nodes[nodeName];
     const h = Math.min(Number(hrs) || 24, 168);   // guest history keeps 7d
-    const d = await _swrJSON(`/api/history/entity_bulk?kind=guest&hours=${h}`, () => _loadPxGuestHistory(h, ids, scope));
+    const gd = await _swrJSON(`/api/history/entity_bulk?kind=guest&hours=${h}`, () => _loadPxNodeDrilldown(h, ids, nodeName));
     const px = window._pxLast || {};
-    const ents = (d && d.entities) || {};
-    const set = new Set(((scope === 'lxcs' ? px.lxcs : px.vms) || []).map(g => String(g.vmid)));
+    const ents = (gd && gd.entities) || {};
     const meta = {}; (px.vms || []).concat(px.lxcs || []).forEach(g => meta[String(g.vmid)] = g);
-    let items = Object.entries(ents).filter(([eid]) => set.has(eid)).map(([eid, s]) => {
+    let items = Object.entries(ents).filter(([eid]) => (meta[eid] || {}).node === nodeName).map(([eid, s]) => {
       const g = meta[eid] || {};
-      return { id: eid, label: g.name || ('#' + eid), node: g.node || '', tags: g.tags || '',
+      return { id: eid, label: g.name || ('#' + eid), tags: g.tags || '',
         labels: s.labels || [], cpu: s.cpu || [], mem: s.mem || [] };
     });
     const q = ((window._pxScope && window._pxScope.search) || '').toLowerCase();
-    if (q) items = items.filter(it => ((it.label || '') + ' ' + it.id + ' ' + (it.node || '') + ' ' + (it.tags || '')).toLowerCase().includes(q));
-    // Select top-N by current CPU, then order by VMID for stable per-guest colours.
+    if (q) items = items.filter(it => ((it.label || '') + ' ' + it.id + ' ' + (it.tags || '')).toLowerCase().includes(q));
+    // Select top-N guests by current CPU, then order by VMID for stable colours.
     items.forEach(it => it.cur = it.cpu.length ? (it.cpu[it.cpu.length - 1] || 0) : 0);
     items.sort((a, b) => b.cur - a.cur);
     const _acc = getComputedStyle(document.documentElement).getPropertyValue('--c-accent').trim() || '#E57000';
-    const colors = [_acc,'#22C55E','#F59E0B','#EF4444','#A78BFA','#F472B6'];
-    const top = items.slice(0, colors.length).sort((a, b) => Number(a.id) - Number(b.id));
+    const guestColors = ['#22C55E','#F59E0B','#EF4444','#A78BFA','#F472B6','#38BDF8'];
+    const top = items.slice(0, guestColors.length).sort((a, b) => Number(a.id) - Number(b.id));
     const bsec = _bucketSec(hrs);
-    const empty = '<span style="font-size:11px;color:var(--c-muted)">Nothing matches — or no history recorded yet.</span>';
+    const empty = '<span style="font-size:11px;color:var(--c-muted)">No data for this node yet.</span>';
     const paint = (cid, leg, key) => {
       if (!(cid && el(cid))) return;
       const ds = [];
+      if (nd) {
+        const nb = _bucketStats(nd.labels, nd[key] || [], bsec);
+        if (nb.labels.length) ds.push(..._dsBandHidden(nodeName, nb, _acc), _dsAvgOnly(nodeName, nb, _acc, { gradient: 'soft' }));
+      }
       top.forEach((it, i) => {
         const b = _bucketStats(it.labels, it[key], bsec);
-        if (b.labels.length) ds.push(..._dsBandHidden(it.label, b, colors[i]), _dsAvgOnly(it.label, b, colors[i], { gradient: 'soft' }));
+        if (b.labels.length) ds.push(..._dsBandHidden(it.label, b, guestColors[i % guestColors.length]), _dsAvgOnly(it.label, b, guestColors[i % guestColors.length], { gradient: 'soft' }));
       });
       if (!ds.length) { const ch = _charts[cid]; if (ch) { try { ch.destroy(); } catch(e){} delete _charts[cid]; } const L = el(leg); if (L) L.innerHTML = empty; return; }
       _makeChart(cid, ds, v => Math.round(v) + '%', hrs, { legendTarget: leg }); _wireChartHover(cid);
     };
     paint(ids.cpu, ids.cpuLeg, 'cpu');
     paint(ids.ram, ids.ramLeg, 'mem');
-  } catch(e) { console.warn('px guest history:', e); }
+  } catch(e) { console.warn('px node drilldown:', e); }
 }
 
 // Overview Resources card: ONE combined cluster-utilization chart — every
@@ -8300,4 +8330,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='8e9993a45317';
+;window.__BUILD__='dbebe3cd3ab5';

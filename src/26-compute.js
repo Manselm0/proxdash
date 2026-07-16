@@ -90,6 +90,7 @@ function _cmpApply() {
   _cmpRenderChips();
   const d = window._lastData; if (!d || !d.proxmox) return;
   const px = d.proxmox;
+  _pxScopeRenderButtons();
   // Type filter (empty = all): hide the sections whose kind isn't selected.
   const kf = window._cmp.types, show = k => !kf.length || kf.includes(k);
   const list = window._cmp.view === 'list';
@@ -295,6 +296,7 @@ function _cmpInit() {
     requestAnimationFrame(() => _histThumbUpdate('cmp-status'));
   }
   // Position the sliding thumbs for the Cluster scope + view toggles too.
+  _pxScopeRenderButtons();
   requestAnimationFrame(() => { _histThumbUpdate('px-scope'); _histThumbUpdate('cmp-view'); });
   _cmpRenderControls();
   _cmpRenderChips();
@@ -311,13 +313,33 @@ function _cmpInit() {
 }
 
 // ── Cluster chart scope (Compute page) ──────────────────────────────────────
-// Toggle the Cluster CPU + RAM line charts between per-node and per-guest
-// (VMs / LXCs) series. The actual loading lives in loadPxHistory /
-// _loadPxGuestHistory (src/65-time-range.js); here we just hold the state and
-// re-trigger a load on toggle. The filter box is only useful for guest scopes,
-// so it's hidden for Nodes.
-window._pxScope = window._pxScope || { scope: 'nodes', search: '' };
+// Toggle the Cluster CPU + RAM line charts between "All" (every node, the old
+// default) and a single node. The actual loading lives in loadPxHistory /
+// _loadPxNodeDrilldown (src/65-time-range.js); here we just hold the state,
+// render the scope buttons, and re-trigger a load on toggle. Picking a single
+// node also pulls in that node's own guests (VMs + LXCs) in the drilldown, so
+// the filter box doubles as a node-name filter under "All" and a guest-name
+// filter once a node is selected.
+window._pxScope = window._pxScope || { scope: 'all', search: '' };
 let _pxScopeTimer = null;
+// Never hardcode node names (portability rule) — read them from live data.
+function _pxScopeNodeNames() {
+  const px = window._lastData && window._lastData.proxmox;
+  return ((px && px.nodes) || []).map(n => n.node).filter(Boolean);
+}
+// Rebuilds only when the live node set actually changes, so a poll tick
+// doesn't tear down the buttons (and the user's selection) every few seconds.
+function _pxScopeRenderButtons() {
+  const range = el('px-scope-hist-range'); if (!range) return;
+  const names = _pxScopeNodeNames();
+  const sig = names.join(',');
+  if (range.dataset.pxSig === sig && range.querySelector('.hist-btn')) return;
+  range.dataset.pxSig = sig;
+  if (window._pxScope.scope !== 'all' && !names.includes(window._pxScope.scope)) window._pxScope.scope = 'all';
+  const btn = (v, label) => `<button class="hist-btn${window._pxScope.scope === v ? ' active' : ''}" data-v="${esc(v)}" onclick="_pxScopeSet(this,'${esc(v)}')">${esc(label)}</button>`;
+  range.innerHTML = btn('all', 'All') + names.map(n => btn(n, n)).join('');
+  requestAnimationFrame(() => _histThumbUpdate('px-scope'));
+}
 function _pxScopeSet(btn, val) {
   window._pxScope.scope = val;
   const p = btn.closest('.hist-range');
