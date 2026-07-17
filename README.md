@@ -13,13 +13,9 @@ It is **not** a customizable launcher or a board you assemble tile by tile. The 
 
 ## Screenshots
 
-_Screenshots coming soon._
-
-<!--
 ![Overview](docs/screenshots/overview.png)
-![Proxmox cluster](docs/screenshots/proxmox.png)
+![Compute](docs/screenshots/proxmox.png)
 ![Topology](docs/screenshots/topology.png)
--->
 
 ## Features
 
@@ -33,7 +29,7 @@ _Screenshots coming soon._
 - Automatic cluster health checks plus optional generic HTTP checks
 - Historical charts backed by SQLite, including optional Proxmox RRD import
 - Diagnostic tools: certificate checks, traceroute, network checks, and Wake-on-LAN
-- Optional read-only AI assistant (TARS), using your own Anthropic API key
+- Optional read-only AI assistant (TARS) — Anthropic Claude, the OpenAI cloud API, or any self-hosted OpenAI-compatible server (Open WebUI, Ollama, LM Studio, vLLM) for fully local models
 - Self-contained demo mode for evaluation without a Proxmox cluster
 
 ## Quick start

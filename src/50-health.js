@@ -216,7 +216,7 @@ function renderHealthConsole(data){
   const push = (sev, icon, who, what, page) => issues.push({ sev, icon, who, what, page });
   // down checks (with how long). Skip the AUTO node/ceph checks — the dedicated
   // "node offline" / "Ceph …" rows below say the same thing (avoids a duplicate
-  // e.g. both "Node Odyssey check failing" and "Odyssey node offline").
+  // e.g. both "Node pve1 check failing" and "pve1 node offline").
   Object.entries(health).forEach(([k, v]) => {
     if (!v || typeof v !== 'object' || !('up' in v) || v.up === true) return;
     if (v.auto && (/^Node /.test(k) || k === 'Ceph')) return;

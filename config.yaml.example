@@ -65,11 +65,20 @@ tools:
     #   mac: "AA:BB:CC:DD:EE:FF"
 
 # ─── AI Assistant (TARS) ─────────────────────────────────────────────────────
-# Optional in-dashboard AI chat assistant. You supply your own Anthropic API
-# key (console.anthropic.com); nothing is sent anywhere else. Omit this whole
-# block to disable the assistant. The config key must stay `tars`.
+# Optional in-dashboard AI chat assistant. Two providers:
+#   - "anthropic" — Claude, via your own API key from console.anthropic.com.
+#   - "openai"    — the real OpenAI cloud API, OR any self-hosted server that
+#     speaks the same OpenAI-compatible protocol: Open WebUI, Ollama (point
+#     base_url at "http://192.168.1.X:11434/v1"), LM Studio, vLLM, etc. Leave
+#     api_key blank for a local server that requires no auth.
+# Nothing is sent anywhere except the provider you configure. Set enabled:
+# false to turn the assistant off without clearing your credentials. The
+# config key must stay `tars`.
 tars:
-  api_key: ""
-  model: "claude-sonnet-4-6"
+  enabled: false
+  provider: "anthropic"      # "anthropic" or "openai"
+  api_key: ""                # Anthropic API key, OpenAI API key, or blank for an auth-less local server
+  model: "claude-sonnet-5"   # e.g. "gpt-4o-mini", "llama3.1", or your local model's name for openai
+  base_url: "https://api.openai.com/v1"   # openai provider only — point at your local server's /v1 endpoint
   max_tokens: 2048
-  thinking_budget: 1200
+  thinking_budget: 1200      # Anthropic extended thinking only; ignored for openai

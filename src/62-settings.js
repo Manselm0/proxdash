@@ -199,12 +199,19 @@ async function _logoReset(){
 
 function buildAssistantTab(cfg){
   const ta=cfg.tars||{};
+  const provider = ta.provider==='openai' ? 'openai' : 'anthropic';
   return sGroup('AI Assistant',
-      sRow('Anthropic API key',sPass('cfg-tars-key',ta.api_key||''))
-    + sRow('Model',sText('cfg-tars-model',ta.model||'claude-sonnet-4-6','claude-sonnet-4-6'))
+      sEnabled('cfg-tars-en',ta.enabled)
+    + sRow('Provider','<select id="cfg-tars-provider" class="s-inp">'
+        +'<option value="anthropic"'+(provider==='anthropic'?' selected':'')+'>Anthropic (Claude)</option>'
+        +'<option value="openai"'+(provider==='openai'?' selected':'')+'>OpenAI-compatible (OpenAI cloud, Open WebUI, Ollama, LM Studio, vLLM…)</option>'
+        +'</select>')
+    + sRow('API key',sPass('cfg-tars-key',ta.api_key||''))
+    + sRow('Base URL',sText('cfg-tars-baseurl',ta.base_url||'','https://api.openai.com/v1'))
+    + sRow('Model',sText('cfg-tars-model',ta.model||'claude-sonnet-5','claude-sonnet-5'))
     + sRow('Max tokens','<input type="number" id="cfg-tars-maxtok" class="s-inp" style="width:90px" value="'+(ta.max_tokens||2048)+'" min="256" max="8192">')
     + sRow('Thinking budget','<input type="number" id="cfg-tars-think" class="s-inp" style="width:90px" value="'+(ta.thinking_budget||1200)+'" min="1024" max="6000">')
-    + sHelp('Optional AI assistant powered by your own Anthropic API key. Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>, or leave the key blank to disable the assistant. Max tokens bounds the cost per reply; the thinking budget (min 1024) is how much the model reasons before answering.')
+    + sHelp('Optional AI assistant. <b>Anthropic</b>: get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> — thinking budget (min 1024) applies here. <b>OpenAI-compatible</b>: works with the real OpenAI cloud API, or point Base URL at any local server\'s <code>/v1</code> endpoint — Open WebUI, Ollama (<code>http://192.168.1.X:11434/v1</code>), LM Studio, vLLM — leave the API key blank if the server needs none; thinking budget is ignored. Enabled controls whether the assistant runs at all, independent of these fields.')
   );
 }
 function buildInfrastructureTab(cfg){
@@ -233,7 +240,7 @@ function addHcRow(){const w=document.createElement('div');w.innerHTML=hcRow({nam
 // other key falls through the `...orig` spread untouched, so trimming the UI
 // never wipes a still-present integration in config.yaml. Secrets left as the
 // server's sentinel round-trip back to their stored value (see _restore_secrets).
-function collectSettings(){const orig=settingsConfig;return{...orig,title:gval('cfg-title'),poll_interval:parseInt(gval('cfg-poll'))||10,auth:collectAuth(),proxmox:{enabled:gchecked('cfg-px-en'),url:gval('cfg-px-url'),token_id:gval('cfg-px-tid'),token_secret:gval('cfg-px-secret')},pbs:{enabled:gchecked('cfg-pbs-en'),url:gval('cfg-pbs-url'),token_id:gval('cfg-pbs-tid'),token_secret:gval('cfg-pbs-secret')},health_checks:collectHealth(),tars:{api_key:gval('cfg-tars-key'),model:gval('cfg-tars-model')||'claude-sonnet-4-6',max_tokens:parseInt(gval('cfg-tars-maxtok'))||2048,thinking_budget:parseInt(gval('cfg-tars-think'))||1200}};}
+function collectSettings(){const orig=settingsConfig;return{...orig,title:gval('cfg-title'),poll_interval:parseInt(gval('cfg-poll'))||10,auth:collectAuth(),proxmox:{enabled:gchecked('cfg-px-en'),url:gval('cfg-px-url'),token_id:gval('cfg-px-tid'),token_secret:gval('cfg-px-secret')},pbs:{enabled:gchecked('cfg-pbs-en'),url:gval('cfg-pbs-url'),token_id:gval('cfg-pbs-tid'),token_secret:gval('cfg-pbs-secret')},health_checks:collectHealth(),tars:{enabled:gchecked('cfg-tars-en'),provider:gval('cfg-tars-provider')||'anthropic',api_key:gval('cfg-tars-key'),base_url:gval('cfg-tars-baseurl'),model:gval('cfg-tars-model')||'claude-sonnet-5',max_tokens:parseInt(gval('cfg-tars-maxtok'))||2048,thinking_budget:parseInt(gval('cfg-tars-think'))||1200}};}
 // Preserve any auth keys we don't surface in the UI (session store settings,
 // future flags) via the ...orig spread; overwrite only the edited fields.
 function collectAuth(){const orig=settingsConfig.auth||{};return{...orig,enabled:gchecked('cfg-auth-en'),session_ttl_days:parseInt(gval('cfg-auth-ttl'))||7};}

@@ -4174,7 +4174,13 @@ async def auth_logout(request: Request):
 
 # Catch-all page routes — must be registered AFTER all specific routes
 # (e.g. /auth/*) so they don't shadow them.
-# ── TARS chat — Claude API proxy with adjustable personality dials ────────────
+# ── TARS chat — pluggable LLM backend with adjustable personality dials ──────
+# Two providers, one SSE contract: both _tars_stream_anthropic and
+# _tars_stream_openai emit the exact same custom event stream (text/thinking/
+# tool/done/error — NOT a raw passthrough of either vendor's own stream format),
+# so the frontend (src/46-tars.js) never needs to know which provider answered.
+# "openai" covers the real OpenAI cloud API AND any self-hosted OpenAI-compatible
+# server — Open WebUI, Ollama, LM Studio, vLLM, etc. — via base_url.
 def _tars_system(dials: dict) -> str:
     def clamp(v, d):
         try: return max(0, min(100, int(v)))
@@ -4208,6 +4214,13 @@ _TARS_TOOLS = [{
                      "description": "section keys to fetch, or ['all'] for the available list"}},
         "required": ["sections"]},
 }]
+def _tars_tools_openai():
+    """OpenAI function-calling wraps the same JSON schema Anthropic's tool_use
+    uses — just under {type:function, function:{name,description,parameters}}."""
+    return [{"type": "function", "function": {
+        "name": t["name"], "description": t["description"], "parameters": t["input_schema"],
+    }} for t in _TARS_TOOLS]
+
 _TARS_SEM = asyncio.Semaphore(2)
 
 async def _bounded_tars_stream(stream):
@@ -4235,11 +4248,196 @@ def _tars_exec_tool(name: str, inp: dict) -> str:
     txt = json.dumps(out, default=str)
     return txt[:9000] + ("…(truncated)" if len(txt) > 9000 else "")
 
+async def _tars_stream_anthropic(msgs, dials, cfg, key):
+    model = cfg.get("model") or "claude-sonnet-5"
+    try:
+        max_tokens = max(2048, min(int(cfg.get("max_tokens", 2048)), 8192))
+        think_budget = max(1024, min(int(cfg.get("thinking_budget", 1200)), max_tokens - 1))
+    except (TypeError, ValueError):
+        max_tokens, think_budget = 2048, 1200
+    base = {
+        "model": model, "max_tokens": max_tokens,
+        "system": _tars_system(dials), "stream": True,
+        "thinking": {"type": "enabled", "budget_tokens": think_budget},
+        "tools": _TARS_TOOLS,
+    }
+    s = _get_http_session()
+    headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    convo = list(msgs)
+    try:
+        for _turn in range(6):  # cap agentic tool iterations
+            cur, stop_reason = {}, None  # cur: block index -> accumulator
+            async with s.post("https://api.anthropic.com/v1/messages", json={**base, "messages": convo},
+                              headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as r:
+                if r.status != 200:
+                    detail = (await r.text())[:300]
+                    yield "event: error\ndata: " + json.dumps({"status": r.status, "detail": detail}) + "\n\n"
+                    return
+                async for line_b in r.content:
+                    line = line_b.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    try:
+                        ev = json.loads(data)
+                    except Exception:
+                        continue
+                    et = ev.get("type")
+                    if et == "content_block_start":
+                        cb = ev.get("content_block", {}) or {}
+                        t = cb.get("type"); b = {"type": t}
+                        if t == "thinking":
+                            b.update(thinking="", signature="")
+                        elif t == "text":
+                            b.update(text="")
+                        elif t == "tool_use":
+                            b.update(id=cb.get("id"), name=cb.get("name"), _in="")
+                            yield "event: tool\ndata: " + json.dumps({"phase": "call", "name": cb.get("name")}) + "\n\n"
+                        cur[ev.get("index")] = b
+                    elif et == "content_block_delta":
+                        b = cur.get(ev.get("index"))
+                        if not b:
+                            continue
+                        d = ev.get("delta", {}); dt = d.get("type")
+                        if dt == "thinking_delta":
+                            b["thinking"] += d.get("thinking", "")
+                            yield "event: thinking\ndata: " + json.dumps({"t": d.get("thinking", "")}) + "\n\n"
+                        elif dt == "signature_delta":
+                            b["signature"] += d.get("signature", "")
+                        elif dt == "text_delta":
+                            b["text"] += d.get("text", "")
+                            yield "event: text\ndata: " + json.dumps({"t": d.get("text", "")}) + "\n\n"
+                        elif dt == "input_json_delta":
+                            b["_in"] += d.get("partial_json", "")
+                    elif et == "message_delta":
+                        stop_reason = (ev.get("delta", {}) or {}).get("stop_reason") or stop_reason
+            # reassemble the assistant turn (thinking + text + tool_use) in block order
+            blocks = []
+            for idx in sorted(cur):
+                b = cur[idx]
+                if b["type"] == "thinking":
+                    blocks.append({"type": "thinking", "thinking": b["thinking"], "signature": b["signature"]})
+                elif b["type"] == "text":
+                    blocks.append({"type": "text", "text": b["text"]})
+                elif b["type"] == "tool_use":
+                    try:
+                        inp = json.loads(b["_in"] or "{}")
+                    except Exception:
+                        inp = {}
+                    blocks.append({"type": "tool_use", "id": b["id"], "name": b["name"], "input": inp})
+            if stop_reason == "tool_use":
+                results = []
+                for b in blocks:
+                    if b.get("type") == "tool_use":
+                        out = _tars_exec_tool(b["name"], b["input"])
+                        yield "event: tool\ndata: " + json.dumps({"phase": "result", "name": b["name"], "input": b["input"]}) + "\n\n"
+                        results.append({"type": "tool_result", "tool_use_id": b["id"], "content": out})
+                convo.append({"role": "assistant", "content": blocks})
+                convo.append({"role": "user", "content": results})
+                continue
+            yield "event: done\ndata: {}\n\n"
+            return
+        yield "event: done\ndata: {}\n\n"  # hit the iteration cap
+    except Exception as e:
+        yield "event: error\ndata: " + json.dumps({"detail": str(e)[:200]}) + "\n\n"
+
+async def _tars_stream_openai(msgs, dials, cfg, key):
+    """OpenAI-compatible chat/completions streaming — the real OpenAI cloud API,
+    or any self-hosted server speaking the same wire protocol (Open WebUI,
+    Ollama's /v1 endpoint, LM Studio, vLLM, etc.). No extended-thinking field
+    in the standard protocol; some local reasoning models (e.g. DeepSeek-R1 via
+    Ollama) stream a de-facto `reasoning_content` delta, which we forward as a
+    thinking event on a best-effort basis when present."""
+    model = cfg.get("model") or "gpt-4o-mini"
+    try:
+        max_tokens = max(256, min(int(cfg.get("max_tokens", 2048)), 8192))
+    except (TypeError, ValueError):
+        max_tokens = 2048
+    base_url = (cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
+    convo = [{"role": "system", "content": _tars_system(dials)}] + list(msgs)
+    headers = {"content-type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body_base = {"model": model, "stream": True, "max_tokens": max_tokens, "tools": _tars_tools_openai()}
+    s = _get_http_session()
+    try:
+        for _turn in range(6):  # cap agentic tool iterations
+            acc_text = ""
+            tool_calls = {}   # index -> {id, name, arguments}
+            finish_reason = None
+            async with s.post(f"{base_url}/chat/completions", json={**body_base, "messages": convo},
+                              headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as r:
+                if r.status != 200:
+                    detail = (await r.text())[:300]
+                    yield "event: error\ndata: " + json.dumps({"status": r.status, "detail": detail}) + "\n\n"
+                    return
+                async for line_b in r.content:
+                    line = line_b.decode("utf-8", "ignore").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        ev = json.loads(data)
+                    except Exception:
+                        continue
+                    choices = ev.get("choices") or []
+                    if not choices:
+                        continue
+                    ch = choices[0]
+                    delta = ch.get("delta") or {}
+                    finish_reason = ch.get("finish_reason") or finish_reason
+                    if delta.get("content"):
+                        acc_text += delta["content"]
+                        yield "event: text\ndata: " + json.dumps({"t": delta["content"]}) + "\n\n"
+                    if delta.get("reasoning_content"):
+                        yield "event: thinking\ndata: " + json.dumps({"t": delta["reasoning_content"]}) + "\n\n"
+                    for tc in (delta.get("tool_calls") or []):
+                        idx = tc.get("index", 0)
+                        slot = tool_calls.setdefault(idx, {"id": None, "name": None, "arguments": ""})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            slot["name"] = fn["name"]
+                            yield "event: tool\ndata: " + json.dumps({"phase": "call", "name": fn["name"]}) + "\n\n"
+                        if fn.get("arguments"):
+                            slot["arguments"] += fn["arguments"]
+            if finish_reason == "tool_calls" and tool_calls:
+                oa_tool_calls, results_msgs = [], []
+                for idx in sorted(tool_calls):
+                    tc = tool_calls[idx]
+                    try:
+                        inp = json.loads(tc["arguments"] or "{}")
+                    except Exception:
+                        inp = {}
+                    out = _tars_exec_tool(tc["name"], inp)
+                    yield "event: tool\ndata: " + json.dumps({"phase": "result", "name": tc["name"], "input": inp}) + "\n\n"
+                    oa_tool_calls.append({"id": tc["id"], "type": "function",
+                                           "function": {"name": tc["name"], "arguments": tc["arguments"] or "{}"}})
+                    results_msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+                convo.append({"role": "assistant", "content": acc_text or None, "tool_calls": oa_tool_calls})
+                convo.extend(results_msgs)
+                continue
+            yield "event: done\ndata: {}\n\n"
+            return
+        yield "event: done\ndata: {}\n\n"  # hit the iteration cap
+    except Exception as e:
+        yield "event: error\ndata: " + json.dumps({"detail": str(e)[:200]}) + "\n\n"
+
 @app.post("/api/tars/chat")
 async def tars_chat(request: Request):
     cfg = config.get("tars", {}) or {}
-    key = cfg.get("api_key")
-    if not key:
+    if cfg.get("enabled") is False:
+        return JSONResponse({"error": "TARS is disabled (tars.enabled: false)."}, status_code=503)
+    provider = (cfg.get("provider") or "anthropic").strip().lower()
+    if provider not in ("anthropic", "openai"):
+        provider = "anthropic"
+    key = cfg.get("api_key") or ""
+    if provider == "anthropic" and not key:
         return JSONResponse(
             {"error": "TARS is not configured. Add a `tars:` section with `api_key` (your Anthropic API key) to config.yaml, then reload."},
             status_code=503)
@@ -4270,109 +4468,21 @@ async def tars_chat(request: Request):
             and str(m.get("content", "")).strip()][-24:]
     if not msgs or msgs[-1]["role"] != "user":
         return JSONResponse({"error": "no user message"}, status_code=400)
-    model = cfg.get("model", "claude-sonnet-4-6")
-    try:
-        max_tokens = max(2048, min(int(cfg.get("max_tokens", 2048)), 8192))
-        think_budget = max(1024, min(int(cfg.get("thinking_budget", 1200)), max_tokens - 1))
-    except (TypeError, ValueError):
-        max_tokens, think_budget = 2048, 1200
-    base = {
-        "model": model, "max_tokens": max_tokens,
-        "system": _tars_system(dials), "stream": True,
-        "thinking": {"type": "enabled", "budget_tokens": think_budget},
-        "tools": _TARS_TOOLS,
-    }
 
-    async def gen():
-        s = _get_http_session()
-        headers = {"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-        convo = list(msgs)
-        try:
-            for _turn in range(6):  # cap agentic tool iterations
-                cur, stop_reason = {}, None  # cur: block index -> accumulator
-                async with s.post("https://api.anthropic.com/v1/messages", json={**base, "messages": convo},
-                                  headers=headers, timeout=aiohttp.ClientTimeout(total=120)) as r:
-                    if r.status != 200:
-                        detail = (await r.text())[:300]
-                        yield "event: error\ndata: " + json.dumps({"status": r.status, "detail": detail}) + "\n\n"
-                        return
-                    async for line_b in r.content:
-                        line = line_b.decode("utf-8", "ignore").strip()
-                        if not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if not data:
-                            continue
-                        try:
-                            ev = json.loads(data)
-                        except Exception:
-                            continue
-                        et = ev.get("type")
-                        if et == "content_block_start":
-                            cb = ev.get("content_block", {}) or {}
-                            t = cb.get("type"); b = {"type": t}
-                            if t == "thinking":
-                                b.update(thinking="", signature="")
-                            elif t == "text":
-                                b.update(text="")
-                            elif t == "tool_use":
-                                b.update(id=cb.get("id"), name=cb.get("name"), _in="")
-                                yield "event: tool\ndata: " + json.dumps({"phase": "call", "name": cb.get("name")}) + "\n\n"
-                            cur[ev.get("index")] = b
-                        elif et == "content_block_delta":
-                            b = cur.get(ev.get("index"))
-                            if not b:
-                                continue
-                            d = ev.get("delta", {}); dt = d.get("type")
-                            if dt == "thinking_delta":
-                                b["thinking"] += d.get("thinking", "")
-                                yield "event: thinking\ndata: " + json.dumps({"t": d.get("thinking", "")}) + "\n\n"
-                            elif dt == "signature_delta":
-                                b["signature"] += d.get("signature", "")
-                            elif dt == "text_delta":
-                                b["text"] += d.get("text", "")
-                                yield "event: text\ndata: " + json.dumps({"t": d.get("text", "")}) + "\n\n"
-                            elif dt == "input_json_delta":
-                                b["_in"] += d.get("partial_json", "")
-                        elif et == "message_delta":
-                            stop_reason = (ev.get("delta", {}) or {}).get("stop_reason") or stop_reason
-                # reassemble the assistant turn (thinking + text + tool_use) in block order
-                blocks = []
-                for idx in sorted(cur):
-                    b = cur[idx]
-                    if b["type"] == "thinking":
-                        blocks.append({"type": "thinking", "thinking": b["thinking"], "signature": b["signature"]})
-                    elif b["type"] == "text":
-                        blocks.append({"type": "text", "text": b["text"]})
-                    elif b["type"] == "tool_use":
-                        try:
-                            inp = json.loads(b["_in"] or "{}")
-                        except Exception:
-                            inp = {}
-                        blocks.append({"type": "tool_use", "id": b["id"], "name": b["name"], "input": inp})
-                if stop_reason == "tool_use":
-                    results = []
-                    for b in blocks:
-                        if b.get("type") == "tool_use":
-                            out = _tars_exec_tool(b["name"], b["input"])
-                            yield "event: tool\ndata: " + json.dumps({"phase": "result", "name": b["name"], "input": b["input"]}) + "\n\n"
-                            results.append({"type": "tool_result", "tool_use_id": b["id"], "content": out})
-                    convo.append({"role": "assistant", "content": blocks})
-                    convo.append({"role": "user", "content": results})
-                    continue
-                yield "event: done\ndata: {}\n\n"
-                return
-            yield "event: done\ndata: {}\n\n"  # hit the iteration cap
-        except Exception as e:
-            yield "event: error\ndata: " + json.dumps({"detail": str(e)[:200]}) + "\n\n"
-
-    return StreamingResponse(_bounded_tars_stream(gen()), media_type="text/event-stream", headers=_SSE_HEADERS)
+    stream = _tars_stream_openai(msgs, dials, cfg, key) if provider == "openai" \
+        else _tars_stream_anthropic(msgs, dials, cfg, key)
+    return StreamingResponse(_bounded_tars_stream(stream), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 @app.get("/api/tars/info")
 async def tars_info():
-    """Lightweight, non-secret status for the TARS page header (model + readiness)."""
+    """Lightweight, non-secret status for the TARS page header (provider + model + readiness)."""
     cfg = config.get("tars", {}) or {}
-    return {"configured": bool(cfg.get("api_key")), "model": cfg.get("model", "claude-sonnet-4-6")}
+    provider = (cfg.get("provider") or "anthropic").strip().lower()
+    if provider not in ("anthropic", "openai"):
+        provider = "anthropic"
+    configured = cfg.get("enabled") is not False and (provider == "openai" or bool(cfg.get("api_key")))
+    default_model = "claude-sonnet-5" if provider == "anthropic" else "gpt-4o-mini"
+    return {"configured": configured, "provider": provider, "model": cfg.get("model") or default_model}
 
 # Mount static files before the catch-all routes below; otherwise FastAPI would
 # match /static/<file> as a page slug and return a misleading 404.
