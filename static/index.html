@@ -1856,9 +1856,15 @@ html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
      above) still looks broken once real node names are long enough that the
      scope pill itself wraps mid-pill (an orphaned last button on its own
      line inside the rounded background) and shoves the time-range pill off
-     to one side. Force each group onto its own full-width row instead — a
-     clean stack beats a partial, uneven wrap. */
-  #page-proxmox .sec-hdr-actions > * { flex: 1 1 100%; max-width: 100%; }
+     to one side. Stack each group on its own row instead of sharing one —
+     but via flex-direction:column, NOT `flex-basis:100%` on each child
+     (tried that first): a pill's rounded background lives directly on the
+     flex item, so forcing its basis to 100% stretched the pill itself full
+     width with the buttons still packed at one end, looking just as broken
+     as the overflow it replaced. Column direction stacks them without
+     touching each pill's own size; align-items:flex-start stops the default
+     cross-axis stretch (which in column mode would do the same thing). */
+  #page-proxmox .sec-hdr-actions { flex-direction: column; align-items: flex-start; }
   /* The scope pill's button count is unbounded (one per cluster node, any
      Proxmox install) — internal flex-wrap (the generic .hist-range mobile
      rule) degrades badly past a handful of nodes. Make it a single-line,
