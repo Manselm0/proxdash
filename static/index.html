@@ -893,14 +893,18 @@ html.light .hd-slider .hd-sl-knob { background:#fff; box-shadow:0 1px 4px rgba(0
 .tars-chip { font-family:'SF Mono','JetBrains Mono',ui-monospace,monospace; font-size:12px; color:#c9d6e3; background:#0e1117; border:1px solid #222831; border-radius:9999px; padding:6px 13px; cursor:pointer; transition:background-color .13s ease, border-color .13s ease, transform .13s var(--ease-out); }
 .tars-chip:active { transform:scale(.97); }
 @media (hover:hover) and (pointer:fine) { .tars-chip:hover { background:#1a2230; border-color:#2c3645; } }
+/* Not-configured empty state: replaces the suggestion chips (useless if the
+   assistant can't answer) with a plain, moderate call-to-action — not a loud
+   red banner, just a clearly-labeled button straight to Settings. */
+.tars-empty-cta { font-family:inherit; font-size:13px; font-weight:600; color:var(--c-text); background:var(--c-card); border:1px solid var(--c-border); border-radius:9999px; padding:9px 18px; cursor:pointer; transition:background-color .13s ease, border-color .13s ease; }
+@media (hover:hover) and (pointer:fine) { .tars-empty-cta:hover { background:#1a2230; border-color:#2c3645; } }
 @media (prefers-reduced-motion:reduce) { .tars-dot, .tt-spin { animation:none !important; } .tt-spin { border-top-color:#2a3340; } }
-/* Readiness pill — plain + hoverable when ready; a filled, unmissable red pill
-   (not just a small dot) when not configured, since a leftover model name or
-   an easy-to-miss "not configured" is the whole reason this exists. */
+/* Readiness pill — plain + hoverable, same size whether ready or not; the red
+   dot (existing .tars-dot.bad) plus red-tinted label is enough emphasis in
+   the header. The unmissable call-to-action lives in the empty state instead
+   (see .tars-empty-cta), replacing the now-useless suggestion chips. */
 .tars-rdy-wrap { cursor:pointer; border-radius:9999px; padding:2px 4px; margin:-2px -4px; transition:background-color .12s ease; }
 .tars-rdy-wrap:hover { background:var(--c-hover); }
-.tars-rdy-wrap.tars-rdy-bad { background:rgba(229,83,75,.14); border:1px solid rgba(229,83,75,.35); padding:3px 10px 3px 8px; margin:0; }
-.tars-rdy-wrap.tars-rdy-bad:hover { background:rgba(229,83,75,.22); }
 .tars-rdy-wrap.tars-rdy-bad b { color:#e5534b; }
 /* Conversation history list (inside .tars-modal-card) */
 .tars-hist-row { display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:10px; cursor:pointer; transition:background-color .12s ease; }

@@ -53,17 +53,21 @@ function tarsKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); tarsSend(); }
   const t = el('tars-input'); if (t) { t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
 }
-// ── Empty state (suggestion chips) ───────────────────────────────────────────
+// ── Empty state (suggestion chips, or a setup CTA when not configured) ───────
 const _TARS_CHIPS = ["What's down right now?", "How's storage looking?", "Which node is busiest?", "Any failed backups?"];
+let _tarsConfigured = true;   // optimistic until /api/tars/info says otherwise
 function _tarsRenderEmpty() {
   const c = el('tars-chat'); if (!c) return;
-  c.innerHTML =
-    '<div class="tars-empty" id="tars-empty">'
+  const body = _tarsConfigured
+    ? '<div class="tars-empty-hint">Ask about the cluster, storage, backups, or what is down. The assistant reads your live cluster (read-only).</div>'
+      + '<div class="tars-chips">'
+      + _TARS_CHIPS.map(q => '<button class="tars-chip" data-q="' + esc(q) + '" onclick="tarsSuggest(this.dataset.q)">' + esc(q) + '</button>').join('')
+      + '</div>'
+    : '<div class="tars-empty-hint">The assistant isn\'t configured yet — add an API key or point it at a local model in Settings.</div>'
+      + '<button class="tars-empty-cta" onclick="_tarsGoSettings()">Set up the Assistant</button>';
+  c.innerHTML = '<div class="tars-empty" id="tars-empty">'
     + '<svg class="tars-empty-glyph" width="46" height="40" viewBox="0 0 46 40" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="36" rx="2.5"/><rect x="14" y="2" width="8" height="36" rx="2.5"/><rect x="26" y="2" width="8" height="36" rx="2.5"/><rect x="38" y="2" width="6" height="36" rx="2.5"/></svg>'
-    + '<div class="tars-empty-hint">Ask about the cluster, storage, backups, or what is down. The assistant reads your live cluster (read-only).</div>'
-    + '<div class="tars-chips">'
-    + _TARS_CHIPS.map(q => '<button class="tars-chip" data-q="' + esc(q) + '" onclick="tarsSuggest(this.dataset.q)">' + esc(q) + '</button>').join('')
-    + '</div></div>';
+    + body + '</div>';
 }
 function tarsSuggest(q) {
   const i = el('tars-input'); if (!i) return;
@@ -112,9 +116,13 @@ function _tarsScrollChat() { const c = el('tars-chat'); if (c) c.scrollTop = c.s
 // The model badge only means anything once the assistant is actually usable —
 // showing a leftover/default model string next to "not configured" reads as a
 // contradiction, so it's hidden entirely until `configured` is true. The
-// readiness pill itself gets a distinct "bad" treatment (filled, clickable
-// straight to Settings) so an unconfigured assistant is unmistakable rather
-// than a small dot easy to miss.
+// header stays modest either way (small dot + label); the real call-to-action
+// lives in the empty state (_tarsRenderEmpty), which swaps the suggestion
+// chips for a setup button when not configured.
+function _tarsSyncConfigured(configured) {
+  _tarsConfigured = configured;
+  if (!_tarsHistory.length && el('tars-empty')) _tarsRenderEmpty();
+}
 function _tarsLoadInfo() {
   const wrap = el('tars-rdy-wrap'), modelItem = el('tars-meta-model-item'), sep = el('tars-meta-sep');
   fetch('/api/tars/info').then(r => r.json()).then(d => {
@@ -124,12 +132,14 @@ function _tarsLoadInfo() {
     if (modelItem) modelItem.style.display = d.configured ? '' : 'none';
     if (sep) sep.style.display = d.configured ? '' : 'none';
     const m = el('tars-meta-model'); if (m) m.textContent = String(d.model || '').replace(/^claude-/, '') || '—';
+    _tarsSyncConfigured(!!d.configured);
   }).catch(() => {
     const rd = el('tars-rdy'); if (rd) rd.textContent = 'offline';
     const dot = el('tars-rdy-dot'); if (dot) dot.className = 'tars-dot bad';
     if (wrap) wrap.classList.add('tars-rdy-bad');
     if (modelItem) modelItem.style.display = 'none';
     if (sep) sep.style.display = 'none';
+    _tarsSyncConfigured(false);
   });
 }
 function _tarsGoSettings() {
