@@ -1068,12 +1068,19 @@ html.dark .badge-warn { color:#FBBF24; }
   font-size: 14px; font-weight: 600;
   color: var(--c-text); letter-spacing: -.01em;
   line-height: 1.2;
-  flex: 1;
+  flex-shrink: 0;
 }
+/* flex-grow lives on the SUBTITLE, not the title: every section header has
+   one, so its (now-expanded) box reliably pushes a badge/actions group to
+   the row's end while its own text still sits immediately next to the
+   title — no dead gap between them. Putting the grow on title instead (the
+   old rule) left title's short text at the far left with an empty box
+   trailing it, stranding the subtitle text far to the right on its own. */
 .sec-hdr-sub {
   font-size: 12px; font-weight: 400;
   color: var(--c-muted);
   margin-left: 2px;
+  flex: 1 1 auto; min-width: 0;
 }
 .sec-hdr-badge {
   background: var(--c-hover);
