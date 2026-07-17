@@ -1,49 +1,8 @@
-// ── Shared ProxDash slider (.hd-slider — CSS in index.html) ──────────────────
-// Overlay pattern: custom visuals + a transparent native range. _hdSl keeps the
-// clip-path fill + knob in sync with the value; hdSlider() builds the markup.
-function _hdSl(input) {
-  const w = input.closest('.hd-slider'); if (!w) return;
-  const mn = parseFloat(input.min) || 0, mxr = parseFloat(input.max), mx = isNaN(mxr) ? 100 : mxr;
-  const p = mx > mn ? ((parseFloat(input.value) - mn) / (mx - mn) * 100) : 0;
-  w.style.setProperty('--p', Math.max(0, Math.min(100, p)) + '%');
-}
-function hdSlider(o) {
-  o = o || {};
-  const mn = o.min == null ? 0 : o.min, mx = o.max == null ? 100 : o.max, v = o.value == null ? mn : o.value;
-  const p = mx > mn ? ((v - mn) / (mx - mn) * 100) : 0;
-  return '<div class="hd-slider" style="--p:' + Math.max(0, Math.min(100, p)) + '%' + (o.style ? ';' + o.style : '') + '">'
-    + '<div class="hd-sl-trk"><div class="hd-sl-fill"></div></div><div class="hd-sl-knob"></div>'
-    + '<input type="range" min="' + mn + '" max="' + mx + '" value="' + v + '"' + (o.aria ? ' aria-label="' + esc(o.aria) + '"' : '')
-    + ' oninput="_hdSl(this);' + (o.oninput || '') + '"' + (o.onchange ? ' onchange="' + o.onchange + '"' : '') + '></div>';
-}
-
 // ── TARS chat (Claude API proxy, streaming thinking + text) ──────────────────
-const _TARS_DIALS = [
-  { k: 'humor',   label: 'Humor',   def: 75 },
-  { k: 'honesty', label: 'Honesty', def: 90 },
-  { k: 'sarcasm', label: 'Sarcasm', def: 30 },
-];
-let _tarsState = { humor: 75, honesty: 90, sarcasm: 30 };
 let _tarsHistory = [];
 let _tarsBusy = false;
+let _tarsActiveId = null;   // id of the conversation currently open, once saved once
 
-function _tarsLoadDials() {
-  try { Object.assign(_tarsState, JSON.parse(localStorage.getItem('hd-tars-dials') || '{}')); } catch (e) {}
-}
-function _tarsRenderDials() {
-  const host = el('tars-dials'); if (!host) return;
-  host.innerHTML = _TARS_DIALS.map(d =>
-    '<div><div style="display:flex;justify-content:space-between;font-size:12px;color:var(--c-muted);margin-bottom:6px">'
-    + '<span>' + d.label + '</span><span id="tars-val-' + d.k + '" style="color:var(--c-accent);font-weight:700">' + _tarsState[d.k] + '%</span></div>'
-    + hdSlider({ value: _tarsState[d.k], aria: d.label, oninput: "tarsDial('" + d.k + "',this.value)" }) + '</div>'
-  ).join('');
-}
-function tarsDial(k, v) {
-  _tarsState[k] = parseInt(v, 10) || 0;
-  const e = el('tars-val-' + k); if (e) e.textContent = _tarsState[k] + '%';
-  _tarsUpdateDialMeta();
-  try { localStorage.setItem('hd-tars-dials', JSON.stringify(_tarsState)); } catch (e) {}
-}
 function _tarsLine(role, text) {
   const div = document.createElement('div');
   div.className = 'tline tline-' + (role === 'user' ? 'u' : 'a');
@@ -149,25 +108,115 @@ function _tarsFinishThink(answer) {
 }
 function _tarsScrollChat() { const c = el('tars-chat'); if (c) c.scrollTop = c.scrollHeight; }
 
-// ── Header meta-row (model · dials · readiness) ──────────────────────────────
-function _tarsUpdateDialMeta() {
-  const d = el('tars-meta-dials');
-  if (d) d.textContent = 'H' + _tarsState.humor + ' · Ho' + _tarsState.honesty + ' · Sa' + _tarsState.sarcasm;
-}
+// ── Header meta-row (readiness · model) ───────────────────────────────────────
+// The model badge only means anything once the assistant is actually usable —
+// showing a leftover/default model string next to "not configured" reads as a
+// contradiction, so it's hidden entirely until `configured` is true. The
+// readiness pill itself gets a distinct "bad" treatment (filled, clickable
+// straight to Settings) so an unconfigured assistant is unmistakable rather
+// than a small dot easy to miss.
 function _tarsLoadInfo() {
-  _tarsUpdateDialMeta();
+  const wrap = el('tars-rdy-wrap'), modelItem = el('tars-meta-model-item'), sep = el('tars-meta-sep');
   fetch('/api/tars/info').then(r => r.json()).then(d => {
-    const m = el('tars-meta-model'); if (m) m.textContent = String(d.model || '').replace(/^claude-/, '') || '—';
-    const rd = el('tars-rdy'); if (rd) rd.textContent = d.configured ? 'ready' : 'not configured';
+    const rd = el('tars-rdy'); if (rd) rd.textContent = d.configured ? 'ready' : 'not configured — set up in Settings';
     const dot = el('tars-rdy-dot'); if (dot) dot.className = 'tars-dot ' + (d.configured ? 'ok' : 'bad');
+    if (wrap) wrap.classList.toggle('tars-rdy-bad', !d.configured);
+    if (modelItem) modelItem.style.display = d.configured ? '' : 'none';
+    if (sep) sep.style.display = d.configured ? '' : 'none';
+    const m = el('tars-meta-model'); if (m) m.textContent = String(d.model || '').replace(/^claude-/, '') || '—';
   }).catch(() => {
     const rd = el('tars-rdy'); if (rd) rd.textContent = 'offline';
     const dot = el('tars-rdy-dot'); if (dot) dot.className = 'tars-dot bad';
+    if (wrap) wrap.classList.add('tars-rdy-bad');
+    if (modelItem) modelItem.style.display = 'none';
+    if (sep) sep.style.display = 'none';
   });
+}
+function _tarsGoSettings() {
+  showPage('settings');
+  setTimeout(() => { if (typeof switchSettingsTab === 'function') switchSettingsTab('assistant'); }, 80);
+}
+
+// ── Conversation history (localStorage — this backend is stateless per
+// request; the browser is the only place a past conversation lives). Capped
+// at 30 so it can't grow unbounded. "New chat" saves whatever's open (if it
+// has any turns) under a stable per-conversation id, then starts fresh.
+const _TARS_CONVOS_KEY = 'hd-tars-convos', _TARS_CONVOS_MAX = 30;
+let _tarsConvos = [];
+function _tarsLoadConvos() {
+  try { _tarsConvos = JSON.parse(localStorage.getItem(_TARS_CONVOS_KEY) || '[]'); }
+  catch (e) { _tarsConvos = []; }
+  if (!Array.isArray(_tarsConvos)) _tarsConvos = [];
+}
+function _tarsSaveConvos() {
+  try { localStorage.setItem(_TARS_CONVOS_KEY, JSON.stringify(_tarsConvos.slice(0, _TARS_CONVOS_MAX))); } catch (e) {}
+}
+function _tarsPersistActive() {
+  if (!_tarsHistory.length) return;
+  _tarsLoadConvos();
+  const firstUser = (_tarsHistory.find(m => m.role === 'user') || {}).content || 'Conversation';
+  const title = firstUser.length > 60 ? firstUser.slice(0, 60) + '…' : firstUser;
+  if (!_tarsActiveId) _tarsActiveId = 'c' + Date.now() + Math.random().toString(36).slice(2, 7);
+  const rec = { id: _tarsActiveId, title, messages: _tarsHistory.slice(), updatedAt: Date.now() };
+  const idx = _tarsConvos.findIndex(c => c.id === _tarsActiveId);
+  if (idx >= 0) _tarsConvos[idx] = rec; else _tarsConvos.unshift(rec);
+  _tarsConvos.sort((a, b) => b.updatedAt - a.updatedAt);
+  _tarsSaveConvos();
+}
+function _tarsFmtWhen(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+function _tarsRenderHistoryList() {
+  const host = el('tars-history-list'); if (!host) return;
+  _tarsLoadConvos();
+  if (!_tarsConvos.length) {
+    host.innerHTML = '<div style="font-size:12px;color:var(--c-muted);padding:8px 0">No past conversations yet.</div>';
+    return;
+  }
+  host.innerHTML = _tarsConvos.map(c =>
+    '<div class="tars-hist-row' + (c.id === _tarsActiveId ? ' active' : '') + '" onclick="tarsLoadConvo(\'' + c.id + '\')">'
+    + '<div class="tars-hist-main"><div class="tars-hist-title">' + esc(c.title) + '</div>'
+    + '<div class="tars-hist-when">' + _tarsFmtWhen(c.updatedAt) + '</div></div>'
+    + '<button class="tars-hist-del" onclick="event.stopPropagation();tarsDeleteConvo(\'' + c.id + '\')" aria-label="Delete conversation">'
+    + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+    + '</button></div>'
+  ).join('');
+}
+function tarsLoadConvo(id) {
+  _tarsPersistActive();
+  _tarsLoadConvos();
+  const c = _tarsConvos.find(x => x.id === id); if (!c) return;
+  _tarsActiveId = c.id;
+  _tarsHistory = c.messages.slice();
+  const chat = el('tars-chat'); chat.innerHTML = '';
+  _tarsHistory.forEach(m => {
+    if (m.role === 'user') { _tarsLine('user', m.content); return; }
+    const div = document.createElement('div'); div.className = 'tline tline-a tmd';
+    div.innerHTML = _tarsMd(m.content); chat.appendChild(div);
+  });
+  chat.scrollTop = chat.scrollHeight;
+  closeTarsHistory();
+}
+function tarsDeleteConvo(id) {
+  _tarsLoadConvos();
+  _tarsConvos = _tarsConvos.filter(c => c.id !== id);
+  _tarsSaveConvos();
+  if (id === _tarsActiveId) _tarsActiveId = null;
+  _tarsRenderHistoryList();
+}
+function openTarsHistory() {
+  _tarsRenderHistoryList();
+  const m = el('tars-history-modal'); if (m) m.classList.add('open');
+}
+function closeTarsHistory() {
+  const m = el('tars-history-modal'); if (m) m.classList.remove('open');
 }
 
 function tarsClear() {
+  _tarsPersistActive();
   _tarsHistory = [];
+  _tarsActiveId = null;
   _tarsRenderEmpty();
 }
 
@@ -197,7 +246,7 @@ async function tarsSend() {
   try {
     const r = await fetch('/api/tars/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf() },
-      body: JSON.stringify({ messages: _tarsHistory, dials: _tarsState }),
+      body: JSON.stringify({ messages: _tarsHistory }),
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
@@ -246,19 +295,12 @@ async function tarsSend() {
     line.classList.remove('tline-live');
     _tarsFinishThink(answer);
     if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = ''; }
+    _tarsPersistActive();
   }
 }
 
 function _tarsPageShow() {
-  _tarsLoadDials();
   _tarsLoadInfo();
   const c = el('tars-chat'); if (c && !_tarsHistory.length && !c.firstChild) _tarsRenderEmpty();
   setTimeout(() => { const i = el('tars-input'); if (i) i.focus(); }, 60);
-}
-function openTarsDials() {
-  _tarsLoadDials(); _tarsRenderDials();
-  const m = el('tars-dials-modal'); if (m) m.classList.add('open');
-}
-function closeTarsDials() {
-  const m = el('tars-dials-modal'); if (m) m.classList.remove('open');
 }
