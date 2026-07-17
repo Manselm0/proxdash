@@ -1044,10 +1044,21 @@ html.dark .badge-warn { color:#FBBF24; }
 
 /* Section header (icon + title, optional eyebrow + right-aligned controls) */
 .sec-hdr {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
   margin-bottom: 14px;
   min-height: 22px;
 }
+/* flex-wrap here (not just under the mobile media query below) matters at
+   ordinary desktop widths too: a header with both a .sec-hdr-sub AND a wide
+   .sec-hdr-actions (e.g. Compute's Cluster section — scope pill + filter +
+   time-range pill) has nowhere to shrink once the sidebar is expanded and
+   the viewport isn't ultra-wide (roughly 1000-1400px). Without wrap, the
+   flex layout squeezes .sec-hdr-sub's box until its *text* wraps 2-3 lines
+   while the pills stay a fixed, un-shrinking width — title/subtitle end up
+   looking broken while the room they need just moved to .sec-hdr-actions,
+   which drops to its own line instead once wrapping is allowed. Harmless on
+   wide screens: if everything already fits on one line, wrapping doesn't
+   change anything. */
 .sec-hdr svg { color: var(--c-accent); flex-shrink: 0; }
 /* Pills/controls in the section-header actions are NOT section icons — their
    icons (e.g. the Custom calendar) must follow the button's own currentColor,
@@ -1815,8 +1826,9 @@ html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
      already clips (overflow-hidden, right-aligned) to the most recent history. */
   #page-health .hd-row-3 .hd-card { padding: 12px; min-width: 0; }
   #page-health .hd-row-3 .hd-card > .flex.gap-px { min-width: 0; }
-  /* Section headers wrap cleanly */
-  .sec-hdr { flex-wrap: wrap; gap: 6px 8px; margin-bottom: 12px; }
+  /* Section headers: wrap is now unconditional (base .sec-hdr rule above) —
+     just the mobile size/spacing tweaks left here. */
+  .sec-hdr { margin-bottom: 12px; }
   .sec-hdr-title { font-size: 14px; }
   .sec-hdr-sub   { font-size: 11px; }
   .hist-range { flex-wrap: wrap; max-width: 100%; margin-left: auto; }
