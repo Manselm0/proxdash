@@ -1819,6 +1819,18 @@ html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
   .sec-hdr-title { font-size: 14px; }
   .sec-hdr-sub   { font-size: 11px; }
   .hist-range { flex-wrap: wrap; max-width: 100%; margin-left: auto; }
+  /* .sec-hdr wrapping (above) only drops .sec-hdr-actions to its own row —
+     it doesn't help once that row itself holds multiple unshrinkable groups
+     (e.g. Compute's Cluster header: a scope pill + filter box + time-range
+     pill in one row). Without this, .sec-hdr-actions never wraps internally
+     and just overflows the viewport. Same fix .stor-card-hdr already has. */
+  .sec-hdr-actions { flex-wrap: wrap; row-gap: 6px; }
+  /* Settings rows: a fixed 110px right-aligned label beside the input is too
+     cramped on a phone once the field also carries a reveal-toggle button
+     (API key / token secret rows) — stack label above field instead, the
+     standard mobile form pattern, rather than chase the exact pixel margin. */
+  .s-row { flex-wrap: wrap; }
+  .s-lbl { width: 100%; text-align: left; margin-bottom: 3px; }
 
   /* Storage / Ceph card header: name + (Predictions + range pills) +
      status badge all in one inline-flex row → overflows on phones once the
