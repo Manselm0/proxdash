@@ -821,9 +821,10 @@ html.light .hd-slider .hd-sl-knob { background:#fff; box-shadow:0 1px 4px rgba(0
 #page-tars.active { --c-bg:#000; --c-panel:#18181B; --c-card:#0A0A0C; --c-border:#27272A; --c-text:#FAFAFA; --c-muted:#A1A1AA; --c-dim:#71717A; --c-hover:#27272A; --c-accent-contrast:#06141A;
   position:absolute; inset:0; display:flex; flex-direction:column; padding:4px 18px 16px; background:#000; }
 /* Cap the chat column's width on wide viewports — a chat thread stretched
-   edge-to-edge on an ultrawide monitor is hard to read. Header, transcript,
-   and composer all share the same centered column so they line up. */
-#page-tars .page-hdr, #tars-chat, #page-tars .tars-input-row { width:100%; max-width:820px; margin-left:auto; margin-right:auto; }
+   edge-to-edge on an ultrawide monitor is hard to read. Only the transcript
+   and composer are capped/centered; the header spans the full page width
+   like every other page's header does. */
+#tars-chat, #page-tars .tars-input-row { width:100%; max-width:820px; margin-left:auto; margin-right:auto; }
 #page-tars .page-hdr { flex-shrink:0; }
 #tars-chat { flex:1; min-height:0; overflow-y:auto; margin-top:0; margin-bottom:8px; font-family:'SF Mono','JetBrains Mono',ui-monospace,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.6; }
 /* Inline collapsible thought-process per assistant turn */
@@ -1824,7 +1825,28 @@ html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
      (e.g. Compute's Cluster header: a scope pill + filter box + time-range
      pill in one row). Without this, .sec-hdr-actions never wraps internally
      and just overflows the viewport. Same fix .stor-card-hdr already has. */
-  .sec-hdr-actions { flex-wrap: wrap; row-gap: 6px; }
+  /* width:100% matters here, not just flex-wrap: .sec-hdr-actions has no
+     flex-grow by default, so it shrinks to fit its content — meaning any
+     child's `max-width:100%`/`flex:1 1 100%` has no definite width to
+     resolve against (a circular sizing case) and silently does nothing,
+     which is exactly how the scope pill below escaped its max-width and
+     overflowed the page instead of scrolling within itself. */
+  .sec-hdr-actions { flex-wrap: wrap; row-gap: 6px; width: 100%; }
+  /* Compute's Cluster header specifically: letting its 3 groups (scope pill,
+     filter box, time-range pill) share-and-wrap a row (the generic rule
+     above) still looks broken once real node names are long enough that the
+     scope pill itself wraps mid-pill (an orphaned last button on its own
+     line inside the rounded background) and shoves the time-range pill off
+     to one side. Force each group onto its own full-width row instead — a
+     clean stack beats a partial, uneven wrap. */
+  #page-proxmox .sec-hdr-actions > * { flex: 1 1 100%; max-width: 100%; }
+  /* The scope pill's button count is unbounded (one per cluster node, any
+     Proxmox install) — internal flex-wrap (the generic .hist-range mobile
+     rule) degrades badly past a handful of nodes. Make it a single-line,
+     horizontally-scrollable strip instead, like an iOS segmented/chip row;
+     ID specificity wins over the generic .hist-range class rule. */
+  #px-scope-hist-range { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #px-scope-hist-range::-webkit-scrollbar { display: none; }
   /* Settings rows: a fixed 110px right-aligned label beside the input is too
      cramped on a phone once the field also carries a reveal-toggle button
      (API key / token secret rows) — stack label above field instead, the
