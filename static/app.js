@@ -5237,18 +5237,13 @@ function _ovDerive(data) {
 var _OV_G = '#22C55E', _OV_A = '#F59E0B', _OV_R = '#EF4444', _OV_N = '#6B7280';
 function _ovSev(s) { return s === 'crit' ? _OV_R : s === 'warn' ? _OV_A : _OV_N; }
 
-// Lucide-style icons the feed uses that aren't in the shared registry.
+// Lucide-style icons used by the task feed + consumers header that aren't in
+// the shared registry (svg() falls back to the shared _IC for everything else).
 var _OV_IC = {
-  'alert-triangle': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
-  'rotate-ccw': '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
-  'arrow-up-circle': '<circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/>',
   power: '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>',
-  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   'log-in': '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>',
   terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
-  'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
-  'trending-up': '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
-  'shield-check': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>'
+  'trending-up': '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>'
 };
 function _ovSvg(name, size) {
   size = size || 16;
@@ -5260,52 +5255,39 @@ function _ovBar(p, hex) {
 }
 
 // ── section builders ──────────────────────────────────────────────────────
-function _ovVerdict(D) {
+// The page-header status strip — the house .page-hdr-meta pattern every other
+// page uses (small inline item · thin separator · item), not a banner or a row
+// of boxed tiles. The health verdict leads as a colored dot + count; the rest
+// are clickable jumps to their owning page.
+function _ovHdrMeta(D) {
   var sev = D.nCrit ? 'crit' : D.nWarn ? 'warn' : 'ok';
   var col = sev === 'ok' ? _OV_G : _ovSev(sev);
-  var head = sev === 'ok' ? 'All systems operational'
-    : (D.att.length + ' item' + (D.att.length > 1 ? 's' : '') + ' need' + (D.att.length > 1 ? '' : 's') + ' your attention');
-  var parts = [];
-  if (D.nCrit) parts.push(D.nCrit + ' critical');
-  if (D.nWarn) parts.push(D.nWarn + ' warning' + (D.nWarn > 1 ? 's' : ''));
-  if (D.nInfo) parts.push(D.nInfo + ' to review');
-  var sub = sev === 'ok'
-    ? (D.online.length + ' node' + (D.online.length === 1 ? '' : 's') + ' healthy'
-       + (D.cephOn ? ' · Ceph ' + esc(String(D.ceph.health || '').replace('HEALTH_', '')) : '')
-       + (D.pbsOn && !D.failedB ? ' · backups current' : ''))
-    : parts.join('  ·  ');
-  var upSecs = D.nodes.reduce(function (m, n) { return Math.max(m, n.uptime || 0); }, 0);
-  var upDays = Math.floor(upSecs / 86400);
-  return '<div class="ovm-verdict" style="--sev:' + col + '">'
-    + '<div class="ovm-verdict-dot">' + _ovSvg(sev === 'ok' ? 'shield-check' : sev === 'crit' ? 'alert-triangle' : 'alert-circle', 22) + '</div>'
-    + '<div class="ovm-verdict-txt"><div class="ovm-verdict-h">' + head + '</div><div class="ovm-verdict-s">' + sub + '</div></div>'
-    + '<div class="ovm-verdict-meta">'
-      + '<div><div class="k">' + D.online.length + '<span>/' + D.nodes.length + '</span></div><div class="l">Nodes</div></div>'
-      + '<div><div class="k">' + D.running.length + '<span>/' + D.guests.length + '</span></div><div class="l">Guests</div></div>'
-      + '<div><div class="k">' + upDays + 'd</div><div class="l">Max uptime</div></div>'
-    + '</div></div>';
+  var sep = '<span class="page-hdr-meta-sep"></span>';
+  var mi = function (page, inner) {
+    return '<span class="page-hdr-meta-item" style="cursor:pointer" onclick="showPage(\'' + esc(page) + '\')">' + inner + '</span>';
+  };
+  var items = [];
+  items.push('<span class="page-hdr-meta-item">'
+    + '<span style="width:8px;height:8px;border-radius:50%;background:' + col + ';display:inline-block"></span> '
+    + '<b style="color:' + col + '">' + (sev === 'ok' ? 'Healthy' : D.att.length) + '</b> '
+    + (sev === 'ok' ? '' : 'need attention') + '</span>');
+  items.push(mi('proxmox', svg('server', 13) + ' <b' + (D.online.length < D.nodes.length ? ' style="color:' + _OV_A + '"' : '') + '>' + D.online.length + '/' + D.nodes.length + '</b> nodes'));
+  items.push(mi('proxmox', svg('monitor', 13) + ' <b>' + D.running.length + '/' + D.guests.length + '</b> guests'));
+  items.push(mi('storage', svg('database', 13) + ' <b' + (D.stPct > 90 ? ' style="color:' + _OV_R + '"' : D.stPct > 75 ? ' style="color:' + _OV_A + '"' : '') + '>' + D.stPct + '%</b> storage'));
+  items.push(mi('health', svg('activity', 13) + ' <b' + (D.hDown.length ? ' style="color:' + _OV_R + '"' : '') + '>' + (D.hKeys.length - D.hDown.length) + '/' + D.hKeys.length + '</b> checks'));
+  if (D.cephOn) items.push(mi('health', svg('database', 13) + ' <b style="color:' + (D.cephOk ? _OV_G : _OV_A) + '">' + esc(String(D.ceph.health || '').replace('HEALTH_', '')) + '</b> Ceph'));
+  if (D.pbsOn) items.push(mi('backups', svg('archive', 13) + ' ' + (D.failedB ? '<b style="color:' + _OV_R + '">' + D.failedB + '</b> failed' : '<b>' + (D.ds ? Math.round(D.ds.percent) + '%' : '—') + '</b> backups')));
+  return items.join(sep);
 }
 
-function _ovTiles(D) {
-  var t = [];
-  t.push(_statTile(D.online.length + '/' + D.nodes.length, 'Nodes online', D.online.length < D.nodes.length ? _OV_A : null));
-  t.push(_statTile(D.running.length + '/' + D.guests.length, 'Guests running'));
-  t.push(_statTile(D.stPct + '%', 'Storage used', D.stPct > 90 ? _OV_R : D.stPct > 75 ? _OV_A : null));
-  t.push(_statTile((D.hKeys.length - D.hDown.length) + '/' + D.hKeys.length, 'Health checks', D.hDown.length ? _OV_R : null));
-  if (D.cephOn) t.push(_statTile(esc(String(D.ceph.health || '').replace('HEALTH_', '')) || '—', 'Ceph', D.cephOk ? _OV_G : _OV_A));
-  if (D.pbsOn) t.push(_statTile(D.failedB ? String(D.failedB) : (D.ds ? Math.round(D.ds.percent) + '%' : '—'), D.failedB ? 'Failed backups' : 'Backups used', D.failedB ? _OV_R : null));
-  return '<div class="hd-card p-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">' + t.join('') + '</div>';
-}
-
+var _OV_SEVW = { crit: 'Critical', warn: 'Warning', info: 'Review' };
 function _ovAttention(D) {
-  if (!D.att.length) return '<div class="ovm-att-empty"><div class="ring">' + svg('check', 26) + '</div>'
-    + '<div style="font-size:14px;font-weight:600">Nothing needs attention</div>'
-    + '<div style="font-size:12px;color:var(--c-muted)">Every node, backup, and health check is green.</div></div>';
+  if (!D.att.length) return '<div class="ovm-att-empty">' + svg('check', 16) + ' Nothing needs attention — every node, backup and health check is green.</div>';
   return '<div class="ovm-att">' + D.att.map(function (a) {
     return '<div class="ovm-att-row" style="--sev:' + _ovSev(a.sev) + '" onclick="showPage(\'' + esc(a.page) + '\')" title="Open ' + esc(a.page) + '">'
-      + '<div class="ovm-att-ic">' + _ovSvg(a.ic, 16) + '</div>'
+      + '<span class="ovm-att-dot"></span><span class="ovm-att-sev">' + _OV_SEVW[a.sev] + '</span>'
       + '<div class="ovm-att-body"><div class="ovm-att-t">' + esc(a.t) + '</div><div class="ovm-att-d">' + esc(a.d) + '</div></div>'
-      + '<div class="ovm-att-go">' + _ovSvg('chevron-right', 16) + '</div></div>';
+      + '<span class="ovm-att-go">' + esc(a.page) + ' &rsaquo;</span></div>';
   }).join('') + '</div>';
 }
 
@@ -5383,7 +5365,7 @@ function renderOverview(data) {
   ovEl.className = ''; ovEl.removeAttribute('style');
   _ovLastData = data;
   var D = _ovDerive(data);
-  var hdr = el('overview-hdr-meta'); if (hdr) hdr.innerHTML = '';   // verdict + tiles replace the meta strip
+  var hdr = el('overview-hdr-meta'); if (hdr) hdr.innerHTML = _ovHdrMeta(D);   // house inline status strip
 
   var acc = _ovAccent();
 
@@ -5432,9 +5414,7 @@ function renderOverview(data) {
 
   ovEl.className = 'space-y-6';
   ovEl.innerHTML =
-    '<section>' + _ovVerdict(D) + '</section>'
-    + '<section>' + _ovTiles(D) + '</section>'
-    + '<section class="ovm-cols c-2-1">' + attCard + pulseCard + '</section>'
+    '<section class="ovm-cols c-2-1">' + attCard + pulseCard + '</section>'
     + '<section class="ovm-cols c-2-1">' + loadCard + consumeCard + '</section>'
     + '<section>' + taskCard + '</section>';
   _histSchedule();
@@ -8457,4 +8437,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='e53c26349224';
+;window.__BUILD__='820b648b109f';
