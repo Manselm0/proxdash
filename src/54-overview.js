@@ -1,273 +1,342 @@
-// ── Overview ──────────────────────────────────────────────────────────────
-// Proxmox-only overview in the house language: a 4-across stat-tile summary
-// row, a flagship Cluster card (Ceph-card anatomy: header meta + CPU|RAM
-// history columns + NODES cells), a Storage card (capacity forecast + STORES
-// cells), and the Reliability row (Backups + Health). Everything is built from
-// the generic snapshot and navigates to its page on click.
+// ── Overview — Mission Control (triage-first) ───────────────────────────────
+// The overview answers one question fast: "is everything healthy, and if not,
+// what needs me first?" Layout, top to bottom:
+//   • Verdict banner — one-line cluster health call + node/guest/uptime meta
+//   • Stat-tile summary row (the house .hd-card p-3 + _statTile pattern)
+//   • Needs attention — a synthesized, severity-ranked feed built across every
+//     subsystem (nodes, quorum, Ceph, backups, storage, updates, certs, health,
+//     firewall, 2FA, stopped guests) — each row navigates to its owning page
+//   • Cluster pulse — a per-node rail (CPU/RAM/load/iowait) + a Ceph one-liner
+//   • Cluster load — the live utilization history chart (loadOvResources)
+//   • Top consumers — the hottest guests, CPU⇄RAM toggle
+//   • Recent activity — the cluster task log
 //
-// renderOverview fires on every WS tick; the chart columns (canvases, legends,
-// confidence pill) are saved/restored across the innerHTML rebuild so Chart.js
-// instances stay live, and chart data reloads are throttled to 5 minutes.
+// Everything is derived from the generic Proxmox/Ceph/PBS snapshot, so it renders
+// for any environment and each fetcher degrades gracefully when absent/denied.
+// renderOverview fires on every WS tick; the chart block (#ov-cluster-charts) is
+// saved/restored across the innerHTML rebuild so the Chart.js instance stays live,
+// and its data reload is throttled to 5 minutes.
+
+var _ovLeadMode = 'cpu';          // Top-consumers toggle, persisted across ticks
+var _ovLastData = null;           // last snapshot, so the toggle can re-render
+
+function _ovAccent() {
+  return (getComputedStyle(document.documentElement).getPropertyValue('--c-accent') || '#E57000').trim();
+}
+
+// ── Derive: everything the sections read, computed from the snapshot ──────────
+function _ovDerive(data) {
+  var px = data.proxmox || {}, ceph = data.ceph || {}, hc = data.health || {}, sec = data.security || {};
+  var pbs = data.pbs || {}, _pd = window._pbsDetail || {};
+  var nodes = (px.nodes || []).slice().sort(function (a, b) { return (a.node || '').localeCompare(b.node || ''); });
+  var online = nodes.filter(function (n) { return n.status === 'online'; });
+  var vms = px.vms || [], lxcs = px.lxcs || [], guests = vms.concat(lxcs);
+  var running = guests.filter(function (g) { return g.status === 'running'; });
+  var stopped = guests.filter(function (g) { return g.status !== 'running' && !g.template; });
+
+  var cores = 0, wCpu = 0, mem = 0, memMax = 0;
+  nodes.forEach(function (n) { cores += n.maxcpu || 0; wCpu += (n.cpu || 0) * (n.maxcpu || 0); mem += n.mem || 0; memMax += n.maxmem || 0; });
+  var cpuPct = cores ? Math.round(wCpu / cores * 100) : 0;
+  var memPct = memMax ? Math.round(mem / memMax * 100) : 0;
+
+  var stores = _storageAgg(px.storage || []);
+  var stUsed = stores.reduce(function (a, s) { return a + (s.disk || 0); }, 0);
+  var stCap = stores.reduce(function (a, s) { return a + (s.maxdisk || 0); }, 0);
+  var stPct = stCap ? Math.round(stUsed / stCap * 100) : 0;
+
+  var cephOn = ceph && ceph.status === 'online';
+  var cephOk = cephOn && String(ceph.health || '').toUpperCase().indexOf('ERR') < 0;
+  var cephPct = ceph.usable_percent != null ? Math.round(ceph.usable_percent)
+    : (ceph.usable_total_bytes ? Math.round((ceph.usable_used_bytes || 0) / ceph.usable_total_bytes * 100) : 0);
+
+  var pbsOn = pbs.status === 'online' || (pbs.datastores && pbs.datastores.length);
+  var groups = (pbs.groups && pbs.groups.length) ? pbs.groups : (_pd.groups || []);
+  var snaps = ((pbs.snapshots && pbs.snapshots.length) ? pbs.snapshots : (_pd.snapshots || [])).length;
+  var latest = groups.reduce(function (m, g) { return Math.max(m, g.latest_time || 0); }, 0);
+  var failedB = groups.reduce(function (a, g) { return a + (g.failed_count || 0); }, 0);
+  var ds = (pbs.datastores || [])[0] || null;
+  var staleH = latest ? ((Date.now() / 1000 - latest) / 3600) : null;
+
+  var hKeys = Object.keys(hc).filter(function (k) { return hc[k] && typeof hc[k] === 'object' && 'up' in hc[k]; });
+  var hDown = hKeys.filter(function (k) { return !hc[k].up; });
+
+  var tasks = (data.tasks && data.tasks.tasks) || [];
+  var failedTasks = tasks.filter(function (t) { return t.failed; });
+
+  var users = (sec.users || []).filter(function (u) { return u.enable; });
+  var noTfa = users.filter(function (u) { return !u.tfa; });
+  var fw = sec.firewall || null;
+
+  // ── Attention feed ──────────────────────────────────────────────────────
+  var att = [];
+  function A(sev, ic, t, d, page) { att.push({ sev: sev, ic: ic, t: t, d: d, page: page }); }
+  nodes.filter(function (n) { return n.status !== 'online'; }).forEach(function (n) {
+    A('crit', 'server', 'Node offline — ' + n.node, 'Cluster is running degraded', 'proxmox'); });
+  if (nodes.length > 1 && online.length <= nodes.length / 2)
+    A('crit', 'alert-triangle', 'Quorum lost', online.length + '/' + nodes.length + ' nodes online', 'proxmox');
+  if (cephOn && !cephOk)
+    A(String(ceph.health).toUpperCase().indexOf('ERR') >= 0 ? 'crit' : 'warn', 'database',
+      'Ceph ' + String(ceph.health || '').replace('HEALTH_', ''),
+      (ceph.num_up_osds != null ? ceph.num_up_osds + '/' + ceph.num_osds + ' OSDs up' : 'Cluster health degraded'), 'health');
+  failedTasks.slice(0, 3).forEach(function (t) {
+    A('crit', 'archive', 'Backup failed — ' + (t.type === 'vzdump' ? 'guest ' : '') + t.id,
+      esc(t.status || 'failed') + ' · ' + timeAgo((t.start || 0) * 1000), 'backups'); });
+  if (failedB) A('crit', 'archive', failedB + ' failed backup' + (failedB > 1 ? 's' : ''), 'In the Proxmox Backup Server history', 'backups');
+  if (staleH != null && staleH > 36) A('warn', 'clock', 'Backups are stale', 'Last successful backup ' + timeAgo(latest * 1000), 'backups');
+  stores.filter(function (s) { return s.maxdisk && s.disk / s.maxdisk > 0.9; }).forEach(function (s) {
+    var p = Math.round(s.disk / s.maxdisk * 100);
+    A('crit', 'hard-drive', 'Storage almost full — ' + s.name, p + '% used (' + fmtBytes(s.disk) + ' / ' + fmtBytes(s.maxdisk) + ')', 'storage'); });
+  stores.filter(function (s) { var p = s.maxdisk ? s.disk / s.maxdisk : 0; return p > 0.75 && p <= 0.9; }).forEach(function (s) {
+    A('warn', 'hard-drive', 'Storage filling — ' + s.name, Math.round(s.disk / s.maxdisk * 100) + '% used', 'storage'); });
+  nodes.filter(function (n) { return n.reboot_required; }).forEach(function (n) {
+    A('warn', 'rotate-ccw', 'Reboot required — ' + n.node, 'A kernel or microcode update is pending', 'proxmox'); });
+  var upd = nodes.filter(function (n) { return (n.updates || 0) > 0; });
+  if (upd.length) { var tot = upd.reduce(function (a, n) { return a + n.updates; }, 0);
+    A('info', 'arrow-up-circle', tot + ' package update' + (tot > 1 ? 's' : '') + ' available',
+      upd.map(function (n) { return n.node + ' (' + n.updates + ')'; }).join(', '), 'proxmox'); }
+  nodes.filter(function (n) { return n.cert_days != null && n.cert_days < 30; }).forEach(function (n) {
+    A('warn', 'shield', 'TLS certificate expiring — ' + n.node, n.cert_days + ' days remaining', 'security'); });
+  hDown.forEach(function (k) { A('crit', 'activity', 'Health check down — ' + k, esc((hc[k] || {}).error || 'unreachable'), 'health'); });
+  if (fw && fw.enable != null && fw.enable != 1) A('warn', 'shield', 'Cluster firewall disabled', 'Datacenter firewall policy is off', 'security');
+  if (noTfa.length) A('warn', 'users', noTfa.length + ' account' + (noTfa.length > 1 ? 's' : '') + ' without 2FA',
+    noTfa.map(function (u) { return u.userid; }).join(', '), 'security');
+  if (stopped.length) A('info', 'power', stopped.length + ' guest' + (stopped.length > 1 ? 's' : '') + ' stopped',
+    stopped.map(function (g) { return g.name; }).join(', '), 'proxmox');
+  var rank = { crit: 0, warn: 1, info: 2 };
+  att.sort(function (a, b) { return rank[a.sev] - rank[b.sev]; });
+  var nCrit = att.filter(function (a) { return a.sev === 'crit'; }).length;
+  var nWarn = att.filter(function (a) { return a.sev === 'warn'; }).length;
+  var nInfo = att.filter(function (a) { return a.sev === 'info'; }).length;
+
+  var byCpu = running.map(function (g) { return { g: g, v: (g.cpu || 0) * (g.maxcpu || 0) }; }).sort(function (a, b) { return b.v - a.v; });
+  var byMem = running.map(function (g) { return { g: g, v: g.mem || 0 }; }).sort(function (a, b) { return b.v - a.v; });
+
+  return { ceph: ceph, cephOn: cephOn, cephOk: cephOk, cephPct: cephPct, nodes: nodes, online: online,
+    guests: guests, running: running, stopped: stopped, cores: cores, cpuPct: cpuPct, memPct: memPct,
+    stores: stores, stUsed: stUsed, stCap: stCap, stPct: stPct, pbsOn: pbsOn, groups: groups, snaps: snaps,
+    latest: latest, failedB: failedB, ds: ds, hKeys: hKeys, hDown: hDown, tasks: tasks,
+    att: att, nCrit: nCrit, nWarn: nWarn, nInfo: nInfo, byCpu: byCpu, byMem: byMem };
+}
+
+// ── semantic status colors (documented palette — allowed as literals) ─────────
+var _OV_G = '#22C55E', _OV_A = '#F59E0B', _OV_R = '#EF4444', _OV_N = '#6B7280';
+function _ovSev(s) { return s === 'crit' ? _OV_R : s === 'warn' ? _OV_A : _OV_N; }
+
+// Lucide-style icons the feed uses that aren't in the shared registry.
+var _OV_IC = {
+  'alert-triangle': '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  'rotate-ccw': '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+  'arrow-up-circle': '<circle cx="12" cy="12" r="10"/><polyline points="16 12 12 8 8 12"/><line x1="12" y1="16" x2="12" y2="8"/>',
+  power: '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>',
+  users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  'log-in': '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+  'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
+  'trending-up': '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+  'shield-check': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>'
+};
+function _ovSvg(name, size) {
+  size = size || 16;
+  if (_OV_IC[name]) return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + _OV_IC[name] + '</svg>';
+  return svg(name, size);
+}
+function _ovBar(p, hex) {
+  return '<div class="bar"><div class="bar-fill" style="width:' + Math.min(p, 100) + '%;background:' + (hex || barHex(p)) + '"></div></div>';
+}
+
+// ── section builders ──────────────────────────────────────────────────────
+function _ovVerdict(D) {
+  var sev = D.nCrit ? 'crit' : D.nWarn ? 'warn' : 'ok';
+  var col = sev === 'ok' ? _OV_G : _ovSev(sev);
+  var head = sev === 'ok' ? 'All systems operational'
+    : (D.att.length + ' item' + (D.att.length > 1 ? 's' : '') + ' need' + (D.att.length > 1 ? '' : 's') + ' your attention');
+  var parts = [];
+  if (D.nCrit) parts.push(D.nCrit + ' critical');
+  if (D.nWarn) parts.push(D.nWarn + ' warning' + (D.nWarn > 1 ? 's' : ''));
+  if (D.nInfo) parts.push(D.nInfo + ' to review');
+  var sub = sev === 'ok'
+    ? (D.online.length + ' node' + (D.online.length === 1 ? '' : 's') + ' healthy'
+       + (D.cephOn ? ' · Ceph ' + esc(String(D.ceph.health || '').replace('HEALTH_', '')) : '')
+       + (D.pbsOn && !D.failedB ? ' · backups current' : ''))
+    : parts.join('  ·  ');
+  var upSecs = D.nodes.reduce(function (m, n) { return Math.max(m, n.uptime || 0); }, 0);
+  var upDays = Math.floor(upSecs / 86400);
+  return '<div class="ovm-verdict" style="--sev:' + col + '">'
+    + '<div class="ovm-verdict-dot">' + _ovSvg(sev === 'ok' ? 'shield-check' : sev === 'crit' ? 'alert-triangle' : 'alert-circle', 22) + '</div>'
+    + '<div class="ovm-verdict-txt"><div class="ovm-verdict-h">' + head + '</div><div class="ovm-verdict-s">' + sub + '</div></div>'
+    + '<div class="ovm-verdict-meta">'
+      + '<div><div class="k">' + D.online.length + '<span>/' + D.nodes.length + '</span></div><div class="l">Nodes</div></div>'
+      + '<div><div class="k">' + D.running.length + '<span>/' + D.guests.length + '</span></div><div class="l">Guests</div></div>'
+      + '<div><div class="k">' + upDays + 'd</div><div class="l">Max uptime</div></div>'
+    + '</div></div>';
+}
+
+function _ovTiles(D) {
+  var t = [];
+  t.push(_statTile(D.online.length + '/' + D.nodes.length, 'Nodes online', D.online.length < D.nodes.length ? _OV_A : null));
+  t.push(_statTile(D.running.length + '/' + D.guests.length, 'Guests running'));
+  t.push(_statTile(D.stPct + '%', 'Storage used', D.stPct > 90 ? _OV_R : D.stPct > 75 ? _OV_A : null));
+  t.push(_statTile((D.hKeys.length - D.hDown.length) + '/' + D.hKeys.length, 'Health checks', D.hDown.length ? _OV_R : null));
+  if (D.cephOn) t.push(_statTile(esc(String(D.ceph.health || '').replace('HEALTH_', '')) || '—', 'Ceph', D.cephOk ? _OV_G : _OV_A));
+  if (D.pbsOn) t.push(_statTile(D.failedB ? String(D.failedB) : (D.ds ? Math.round(D.ds.percent) + '%' : '—'), D.failedB ? 'Failed backups' : 'Backups used', D.failedB ? _OV_R : null));
+  return '<div class="hd-card p-3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">' + t.join('') + '</div>';
+}
+
+function _ovAttention(D) {
+  if (!D.att.length) return '<div class="ovm-att-empty"><div class="ring">' + svg('check', 26) + '</div>'
+    + '<div style="font-size:14px;font-weight:600">Nothing needs attention</div>'
+    + '<div style="font-size:12px;color:var(--c-muted)">Every node, backup, and health check is green.</div></div>';
+  return '<div class="ovm-att">' + D.att.map(function (a) {
+    return '<div class="ovm-att-row" style="--sev:' + _ovSev(a.sev) + '" onclick="showPage(\'' + esc(a.page) + '\')" title="Open ' + esc(a.page) + '">'
+      + '<div class="ovm-att-ic">' + _ovSvg(a.ic, 16) + '</div>'
+      + '<div class="ovm-att-body"><div class="ovm-att-t">' + esc(a.t) + '</div><div class="ovm-att-d">' + esc(a.d) + '</div></div>'
+      + '<div class="ovm-att-go">' + _ovSvg('chevron-right', 16) + '</div></div>';
+  }).join('') + '</div>';
+}
+
+function _ovNodeChip(n) {
+  if (n.status !== 'online') return '<span class="ovm-node-chip" style="background:' + _OV_R + '22;color:' + _OV_R + '">offline</span>';
+  if (n.reboot_required) return '<span class="ovm-node-chip" style="background:' + _OV_A + '22;color:' + _OV_A + '">reboot</span>';
+  if ((n.updates || 0) > 0) return '<span class="ovm-node-chip" style="background:var(--c-hover);color:var(--c-muted)">' + n.updates + ' upd</span>';
+  return '<span class="ovm-node-chip" style="background:' + _OV_G + '1f;color:' + _OV_G + '">online</span>';
+}
+
+function _ovNodeRail(D) {
+  var acc = _ovAccent();
+  return '<div class="ovm-noderail">' + D.nodes.map(function (n) {
+    var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
+    var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
+    return '<div class="ovm-node">'
+      + '<div class="ovm-node-top">' + svg('server', 13) + '<span class="ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
+      + '<div class="ovm-node-meta">' + gc + ' guests · ' + fmtUptime(n.uptime) + '</div>'
+      + '<div class="ovm-metric"><span class="ml">CPU</span>' + _ovBar(cp, acc) + '<span class="mv"' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</span></div>'
+      + '<div class="ovm-metric"><span class="ml">RAM</span>' + _ovBar(mp, _OV_G) + '<span class="mv"' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</span></div>'
+      + '<div class="ovm-metric" style="margin-top:5px"><span class="ml">load</span>'
+        + '<span style="grid-column:2/4;font-size:10.5px;color:var(--c-muted)">' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
+          + ' · iowait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</span></div>'
+      + '</div>';
+  }).join('') + '</div>';
+}
+
+function _ovLeadHtml(D) {
+  var mode = _ovLeadMode, acc = _ovAccent();
+  var rows = (mode === 'mem' ? D.byMem : D.byCpu).slice(0, 6);
+  var maxv = rows.length ? rows[0].v : 1;
+  if (!rows.length) return '<div style="font-size:12px;color:var(--c-muted);padding:8px 0">No running guests.</div>';
+  return rows.map(function (r, i) {
+    var g = r.g, w = maxv ? Math.round(r.v / maxv * 100) : 0;
+    var val = mode === 'mem' ? fmtBytes(g.mem) : ((g.cpu * g.maxcpu).toFixed(1) + ' vCPU');
+    return '<div class="ovm-lead-row">'
+      + '<span class="ovm-lead-rank">' + (i + 1) + '</span>'
+      + '<span class="ovm-lead-nm">' + esc(g.name) + '<span class="n">' + (g.type === 'qemu' ? 'VM' : 'CT') + ' ' + g.vmid + ' · ' + esc(g.node) + '</span></span>'
+      + '<div style="width:88px">' + _ovBar(w, mode === 'mem' ? _OV_G : acc) + '</div>'
+      + '<span class="ovm-lead-val">' + val + '</span></div>';
+  }).join('');
+}
+function _ovSetLead(m) {
+  _ovLeadMode = m;
+  var box = el('ov-lead'); if (box && _ovLastData) box.innerHTML = _ovLeadHtml(_ovDerive(_ovLastData));
+  ['cpu', 'mem'].forEach(function (k) { var b = el('ov-lead-tab-' + k); if (b) b.classList.toggle('active', k === m); });
+}
+
+function _ovTaskIcon(t) {
+  var m = { vzdump: 'archive', login: 'log-in', vncshell: 'terminal', termproxy: 'terminal',
+    qmstart: 'power', qmstop: 'power', vzstart: 'power', vzstop: 'power' };
+  return m[t.type] || 'activity';
+}
+function _ovTaskLabel(t) {
+  if (t.type === 'vzdump') return 'Backup ' + (t.failed ? 'failed' : 'completed') + ' — <b>guest ' + esc(t.id) + '</b>';
+  if (t.type === 'login') return 'Login — <b>' + esc(t.user) + '</b>';
+  if (t.type === 'vncshell' || t.type === 'termproxy') return 'Console session — <b>' + esc(t.node) + '</b>';
+  return esc(t.type) + ' — <b>' + esc(t.id) + '</b>';
+}
+function _ovTasks(D) {
+  var rows = D.tasks.slice(0, 7);
+  if (!rows.length) return '<div style="font-size:12px;color:var(--c-muted);padding:8px 0">No recent cluster tasks.</div>';
+  return rows.map(function (t) {
+    return '<div class="ovm-task">'
+      + '<div class="ovm-task-ic"' + (t.failed ? ' style="color:' + _OV_R + ';background:' + _OV_R + '18"' : '') + '>' + _ovSvg(_ovTaskIcon(t), 15) + '</div>'
+      + '<div class="ovm-task-body"><div class="ovm-task-t">' + _ovTaskLabel(t) + '</div>'
+        + '<div class="ovm-task-m">' + esc(t.user) + ' · ' + esc(t.node) + (t.failed ? ' · <span style="color:' + _OV_R + '">' + esc(t.status) + '</span>' : '') + '</div></div>'
+      + '<div class="ovm-task-time">' + timeAgo((t.start || 0) * 1000) + '</div></div>';
+  }).join('');
+}
+
+// ── render ──────────────────────────────────────────────────────────────────
 function renderOverview(data) {
-  const ovEl=el('overview-status');if(!ovEl)return;
-  ovEl.className='';ovEl.removeAttribute('style');
-  const px=data.proxmox||{};
-  const hc=data.health||{};
-  const ceph=data.ceph||{};
-  const nodes=px.nodes||[],onlineN=nodes.filter(n=>n.status==='online');
-  const vms=px.vms||[],lxcs=px.lxcs||[];
-  const runG=vms.filter(v=>v.status==='running').length+lxcs.filter(v=>v.status==='running').length;
-  const totG=vms.length+lxcs.length;
-  const hKeys=Object.keys(hc).filter(k=>typeof hc[k]==='object'&&hc[k]!==null&&'up' in hc[k]);
-  const hUp=hKeys.filter(k=>hc[k].up).length;
-  const stores=_storageAgg(px.storage||[]);
-  const totUsed=stores.reduce((a,s)=>a+(s.disk||0),0);
-  const totCap=stores.reduce((a,s)=>a+(s.maxdisk||0),0);
-  const storPct=totCap?Math.round(totUsed/totCap*100):0;
+  var ovEl = el('overview-status'); if (!ovEl) return;
+  ovEl.className = ''; ovEl.removeAttribute('style');
+  _ovLastData = data;
+  var D = _ovDerive(data);
+  var hdr = el('overview-hdr-meta'); if (hdr) hdr.innerHTML = '';   // verdict + tiles replace the meta strip
 
-  // ── Header stat strip (compact, clickable → the owning page) — mirrors the
-  // other pages' .page-hdr-meta line, and folds in the newer subsystems. ──────
-  const _ovG='#22C55E', _ovA='#F59E0B', _ovR='#EF4444';
-  const _ovIcon=p=>'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>';
-  const _OVIC={
-    node:'<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>',
-    guest:'<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
-    store:'<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
-    check:'<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
-    ceph:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
-    backup:'<path d="M21 8v13H3V8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
-    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'};
-  const _ovMi=(page,ic,valHtml,label)=>'<span class="page-hdr-meta-item" style="cursor:pointer" onclick="showPage(\''+page+'\')">'+_ovIcon(_OVIC[ic])+' '+valHtml+' '+label+'</span>';
-  const _ovItems=[
-    _ovMi('proxmox','node','<b'+(onlineN.length===nodes.length?'':' style="color:'+_ovA+'"')+'>'+onlineN.length+'/'+(nodes.length||0)+'</b>','nodes'),
-    _ovMi('proxmox','guest','<b>'+runG+'/'+totG+'</b>','guests running'),
-    _ovMi('storage','store','<b'+(storPct>90?' style="color:'+_ovR+'"':storPct>75?' style="color:'+_ovA+'"':'')+'>'+storPct+'%</b>','storage'+(totCap?' ('+fmtBytes(totUsed)+' / '+fmtBytes(totCap)+')':'')),
-    _ovMi('health','check','<b'+((hKeys.length-hUp)>0?' style="color:'+_ovR+'"':'')+'>'+hUp+'/'+hKeys.length+'</b>','checks up'),
-  ];
-  if(ceph&&ceph.status==='online'){ const _ok=(ceph.health||'').toUpperCase()==='HEALTH_OK'; _ovItems.push(_ovMi('health','ceph','<b style="color:'+(_ok?_ovG:_ovA)+'">'+esc(String(ceph.health||'?').replace('HEALTH_',''))+'</b>','Ceph')); }
-  const _pbs=data.pbs||{}; const _grp=(_pbs.groups&&_pbs.groups.length)?_pbs.groups:((window._pbsDetail||{}).groups||[]);
-  const _failB=_grp.reduce((a,g)=>a+(g.failed_count||0),0);
-  if(_pbs.status==='online'||(_pbs.datastores&&_pbs.datastores.length)){ const _ds=(_pbs.datastores||[]).length;
-    _ovItems.push(_ovMi('backups','backup', _failB?'<b style="color:'+_ovR+'">'+_failB+'</b>':'<b style="color:'+_ovG+'">'+_ds+'</b>', _failB?'failed backups':('datastore'+(_ds===1?'':'s')))); }
-  const _sec=data.security||{};
-  if(_sec.firewall){ const _fon=_sec.firewall.enable==1; _ovItems.push(_ovMi('security','shield','<b style="color:'+(_fon?_ovG:_ovA)+'">'+(_fon?'on':'off')+'</b>','firewall')); }
-  const _ovHdr=el('overview-hdr-meta'); if(_ovHdr) _ovHdr.innerHTML=_ovItems.join('');
+  var acc = _ovAccent();
 
-  // ── Resources card (cluster history) + Nodes carousel ─────────────────────
-  const quorumOk=nodes.length&&onlineN.length===nodes.length;
-  const clusterBadge=!nodes.length?''
-    : quorumOk?'<span class="badge badge-up">healthy</span>'
-    : onlineN.length>nodes.length/2?'<span class="badge badge-warn">degraded</span>'
-    : '<span class="badge badge-down">no quorum</span>';
-  const cephMeta=(ceph&&ceph.status==='online')?' · Ceph '+esc(String(ceph.health||'?').replace('HEALTH_','')):'';
-  const clusterCard='<div class="hd-card p-4">'
-    +'<div class="stor-card-hdr" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
-      +svg('server',14)
-      +'<span class="font-medium text-sm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Resources'
-        +' <span style="color:var(--c-muted);font-size:11px">· '+onlineN.length+'/'+nodes.length+' nodes · '+runG+'/'+totG+' guests running'+cephMeta+'</span></span>'
-      +clusterBadge
-    +'</div>'
-    +'<div id="ov-cluster-charts">'
-      +'<div style="min-width:0">'
-        +'<div class="stor-hdr"><span class="stor-hdr-label">Utilization</span>'
-          +'<span style="font-size:10px;color:var(--c-dim)">cluster-wide, % of capacity</span>'
-          +'<span class="stor-hdr-spacer"></span><span class="stor-legend" id="chart-ov-res-leg"></span></div>'
-        +'<div style="position:relative;height:220px"><canvas id="chart-ov-res"></canvas></div>'
-      +'</div>'
-    +'</div>'
-  +'</div>';
-
-  // (No per-node section here — the Resources charts carry per-node lines, the
-  // stat tiles carry the counts, and the Compute page owns the node cards.)
-
-  // ── Storage card (forecast + STORES cells) ─────────────────────────────────
-  const storBadge=stores.length
-    ? (stores.every(s=>(s.status||'available')==='available')
-      ? '<span class="badge badge-up">available</span>'
-      : '<span class="badge badge-warn">degraded</span>')
+  // Attention card (flagship) + Cluster pulse (node rail + Ceph line)
+  var attCard = '<div class="hd-card" style="padding:16px">'
+    + '<div class="ovm-ch">' + svg('activity', 15) + '<h3>Needs attention</h3>'
+      + (D.att.length ? '<span class="sub" style="margin-left:auto">' + D.att.length + ' open</span>' : '') + '</div>'
+    + _ovAttention(D) + '</div>';
+  var cephLine = D.cephOn
+    ? '<div class="ovm-node-foot"><span>' + svg('database', 12) + ' Ceph ' + esc(String(D.ceph.health || '').replace('HEALTH_', ''))
+        + (D.ceph.num_up_osds != null ? ' · ' + D.ceph.num_up_osds + '/' + D.ceph.num_osds + ' OSDs' : '') + '</span>'
+        + '<span>' + D.cephPct + '% of ' + fmtBytes(D.ceph.usable_total_bytes) + '</span></div>'
     : '';
-  const storeCells=stores.slice().sort((a,b)=>((b.disk/b.maxdisk)||0)-((a.disk/a.maxdisk)||0)).map(s=>{
-    const pct=s.maxdisk?Math.round(s.disk/s.maxdisk*100):0;
-    const c=pct>90?'#EF4444':pct>75?'#F59E0B':'#22C55E';
-    return '<div title="'+esc(s.name)+'" onclick="showPage(\'storage\')" class="stor-cell" style="background:var(--c-hover);border:1px solid var(--c-border);border-radius:8px;padding:12px 14px;min-width:0;display:flex;flex-direction:column;gap:4px;cursor:pointer">'
-      +'<div style="display:flex;align-items:center;gap:6px;justify-content:space-between">'
-        +'<div style="display:flex;align-items:center;gap:6px;color:var(--c-muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:600;min-width:0">'
-          +svg('database',12)+'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name)+'</span></div>'
-        +'<span class="stor-dot" style="background:'+c+';box-shadow:0 0 5px '+c+'80"></span></div>'
-      +'<div style="font-size:13px;font-weight:600;color:var(--c-text)">'+fmtBytes(s.disk)+' <span style="color:var(--c-muted);font-weight:400;font-size:11px">/ '+fmtBytes(s.maxdisk)+'</span></div>'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--c-muted);margin-top:2px">'
-        +'<span>'+esc(s.type||'storage')+' · '+(s.shared?'shared':'local')+'</span><span style="color:'+c+';font-weight:600">'+pct+'%</span></div>'
-    +'</div>';
-  }).join('')||'<div style="font-size:12px;color:var(--c-muted)">No storage reported.</div>';
-  const storageCard='<div class="hd-card p-4">'
-    +'<div class="stor-card-hdr" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
-      +svg('database',14)
-      +'<span class="font-medium text-sm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Storage'
-        +' <span style="color:var(--c-muted);font-size:11px">· '+stores.length+' store'+(stores.length===1?'':'s')+(totCap?' · '+fmtBytes(totUsed)+' of '+fmtBytes(totCap)+' used':'')+'</span></span>'
-      +'<span id="ov-stor-pills">'+_storPillRow('ov-stor')+'</span>'
-      +storBadge
-    +'</div>'
-    +'<div id="ov-storage-chart">'
-      +'<div class="stor-hdr">'
-        +'<span class="stor-hdr-label">Storage</span>'
-        +'<span class="stor-conf-pill" id="ov-stor-conf">High Confidence</span>'
-        +'<span class="stor-hdr-spacer"></span>'
-        +'<span class="stor-legend">'
-          +'<span class="stor-leg"><span class="stor-leg-line"></span>Historical</span>'
-          +'<span class="stor-leg"><span class="stor-leg-line dashed"></span><span class="stor-leg-dia"></span>Prediction</span>'
-        +'</span>'
-      +'</div>'
-      +'<div style="position:relative;height:180px"><canvas id="chart-ov-storage"></canvas></div>'
-    +'</div>'
-    +'<div style="border-top:1px solid var(--c-border);padding-top:12px;margin-top:14px">'
-      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
-        +svg('database',14)
-        +'<span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Stores</span>'
-        +'<span style="font-size:10px;color:var(--c-muted)">'+stores.length+' store'+(stores.length===1?'':'s')+'</span></div>'
-      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">'+storeCells+'</div>'
-    +'</div>'
-  +'</div>';
+  var pulseCard = '<div class="hd-card" style="padding:16px">'
+    + '<div class="ovm-ch">' + svg('server', 15) + '<h3>Cluster pulse</h3>'
+      + '<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--c-muted)"><span class="sdot sdot-green dot-live"></span>live</span></div>'
+    + _ovNodeRail(D) + cephLine + '</div>';
 
-  const row1=''
-    +'<div class="sec-hdr">'+svg('server',18)+'<h2 class="sec-hdr-title">Compute</h2><span class="sec-hdr-sub">Resource history and live nodes</span>'
-      +'<div class="sec-hdr-actions" onclick="event.stopPropagation()">'+_histPillRow('ov-infra', ['1d','7d','30d','All','Custom'], { stopPropagation: true })+'</div>'
-    +'</div>'
-    +clusterCard;
-  const row2=''
-    +'<div class="sec-hdr">'+svg('database',18)+'<h2 class="sec-hdr-title">Storage</h2><span class="sec-hdr-sub">Cluster-wide capacity and forecast</span></div>'
-    +storageCard;
+  // Cluster load chart (live history) — this block is preserved across ticks.
+  var loadCard = '<div class="hd-card" style="padding:16px">'
+    + '<div class="ovm-ch">' + svg('activity', 15) + '<h3>Cluster load</h3><span class="sub">utilization · % of capacity</span>'
+      + '<span style="margin-left:auto" onclick="event.stopPropagation()">' + _histPillRow('ov-infra', ['1d', '7d', '30d', 'All', 'Custom'], { stopPropagation: true }) + '</span></div>'
+    + '<div id="ov-cluster-charts">'
+      + '<div class="stor-hdr"><span class="stor-hdr-label">CPU &amp; RAM</span>'
+        + '<span class="stor-hdr-spacer"></span><span class="stor-legend" id="chart-ov-res-leg"></span></div>'
+      + '<div style="position:relative;height:200px"><canvas id="chart-ov-res"></canvas></div>'
+    + '</div></div>';
 
-  // ── Network section: cluster-wide throughput (live meta + history chart) ──
-  const _traf=(((data.proxmox||{}).network)||{}).traffic||{};
-  let _tIn=0,_tOut=0;
-  Object.keys(_traf).forEach(k=>{ _tIn+=_traf[k].in||0; _tOut+=_traf[k].out||0; });
-  const networkCard='<div class="hd-card p-4">'
-    +'<div class="stor-card-hdr" style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
-      +svg('activity',14)
-      +'<span class="font-medium text-sm" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Throughput'
-        +' <span style="color:var(--c-muted);font-size:11px">· live &darr; '+fmtBytes(_tIn)+'/s · &uarr; '+fmtBytes(_tOut)+'/s</span></span>'
-    +'</div>'
-    +'<div id="ov-net-chart">'
-      +'<div class="stor-hdr"><span class="stor-hdr-label">Network</span>'
-        +'<span style="font-size:10px;color:var(--c-dim)">all nodes summed</span>'
-        +'<span class="stor-hdr-spacer"></span><span class="stor-legend" id="chart-ov-net-leg"></span></div>'
-      +'<div style="position:relative;height:180px"><canvas id="chart-ov-net"></canvas></div>'
-    +'</div>'
-  +'</div>';
-  const rowNet=''
-    +'<div class="sec-hdr">'+svg('activity',18)+'<h2 class="sec-hdr-title">Network</h2><span class="sec-hdr-sub">Cluster-wide throughput over time</span>'
-      +'<div class="sec-hdr-actions" onclick="event.stopPropagation()">'+_histPillRow('ov-net', ['1d','7d','30d','All','Custom'], { stopPropagation: true })+'</div>'
-    +'</div>'
-    +networkCard;
+  // Top consumers leaderboard (CPU⇄RAM toggle)
+  var consumeCard = '<div class="hd-card" style="padding:16px">'
+    + '<div class="ovm-ch">' + _ovSvg('trending-up', 15) + '<h3>Top consumers</h3>'
+      + '<span class="ovm-tabs" style="margin-left:auto">'
+        + '<button class="ovm-tab' + (_ovLeadMode === 'cpu' ? ' active' : '') + '" id="ov-lead-tab-cpu" onclick="_ovSetLead(\'cpu\')">CPU</button>'
+        + '<button class="ovm-tab' + (_ovLeadMode === 'mem' ? ' active' : '') + '" id="ov-lead-tab-mem" onclick="_ovSetLead(\'mem\')">RAM</button>'
+      + '</span></div>'
+    + '<div id="ov-lead">' + _ovLeadHtml(D) + '</div></div>';
 
-  // ── Reliability: Backups + Health ──────────────────────────────────────────
-  const _nowSec=Date.now()/1000;
-  const pbs=data.pbs||{};
-  const _pbsOn=pbs.status==='online';
-  // snapshots/groups are stripped from the WS tick (heavy) — pull them from the
-  // lazy-loaded detail cache, kicked off by the overview init hook.
-  const _pbsDet=window._pbsDetail||{};
-  const _pbsGroups=(pbs.groups&&pbs.groups.length)?pbs.groups:(_pbsDet.groups||[]);
-  const _pbsSnaps=((pbs.snapshots&&pbs.snapshots.length)?pbs.snapshots:(_pbsDet.snapshots||[])).length;
-  const _pbsLatest=_pbsGroups.reduce((m,g)=>Math.max(m,g.latest_time||0),0);
-  const _pbsFailed=_pbsGroups.reduce((a,g)=>a+(g.failed_count||0),0);
-  const _pbsRecent=_pbsLatest&&(_nowSec-_pbsLatest)<129600;
-  const _archiveSvg='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
-  // Shared rich-card shell: header (icon + label + badge) + a custom body. Clickable.
-  const _ovRich=(o)=>'<div class="hd-card" style="padding:16px;cursor:pointer;display:flex;flex-direction:column" onclick="showPage(\''+o.page+'\')">'
-    +'<div style="display:flex;align-items:center;gap:7px;margin-bottom:13px;color:var(--c-muted)">'+o.icon+'<span style="font-size:12px;font-weight:600;color:var(--c-text)">'+o.label+'</span>'+(o.badge?'<span style="margin-left:auto;display:inline-flex">'+o.badge+'</span>':'')+'</div>'
-    +'<div style="flex:1;min-width:0">'+o.body+'</div></div>';
-  const _bkClr=_pbsFailed?'#EF4444':_pbsRecent?'#22C55E':'#F59E0B';
-  // Compact inline bars: name · track · % — lighter than the old full-width stack.
-  const _bkBars=(pbs.datastores||[]).slice(0,3).map(function(d){const p=Math.round(d.percent||0);return '<div style="display:flex;align-items:center;gap:10px;margin-top:8px">'
-    +'<span style="font-size:11px;color:var(--c-muted);width:74px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(d.name)+'</span>'
-    +'<div style="flex:1;height:6px;border-radius:3px;background:var(--c-bar-bg);overflow:hidden"><div style="height:100%;width:'+Math.min(p,100)+'%;background:'+barHex(p)+';border-radius:3px"></div></div>'
-    +'<span style="font-size:11px;font-weight:600;color:'+barHex(p)+';width:30px;text-align:right;flex-shrink:0">'+p+'%</span></div>';}).join('');
-  const backupsCard=_ovRich({page:'backups',icon:_archiveSvg,label:'Backups',
-    badge:_pbsOn?(_pbsFailed?'<span class="badge badge-down">'+_pbsFailed+' failed</span>':'<span class="badge badge-up">Protected</span>'):'<span class="badge badge-neutral">Offline</span>',
-    body:_pbsOn
-      ? '<div style="display:flex;align-items:center;gap:9px"><span style="width:9px;height:9px;border-radius:50%;background:'+_bkClr+';box-shadow:0 0 0 3px '+_bkClr+'22;flex-shrink:0"></span>'
-          +'<span style="font-size:13px;font-weight:600;color:var(--c-text)">'+(_pbsLatest?'Last backup '+timeAgo(_pbsLatest*1000):'No recent backups')+'</span></div>'
-        +'<div style="font-size:11px;color:var(--c-muted);margin-top:5px;margin-left:18px">'+(_pbsGroups.length||'—')+' guests · '+_pbsSnaps.toLocaleString()+' snapshots</div>'
-        +(_bkBars?'<div style="margin-top:13px;padding-top:12px;border-top:1px solid var(--c-border)">'+_bkBars+'</div>':'')
-      : '<div style="font-size:12px;color:var(--c-muted);padding:6px 0">'+(pbs.error?esc(pbs.error):'Not configured')+'</div>'});
+  // Recent activity (task log)
+  var taskCard = '<div class="hd-card" style="padding:16px">'
+    + '<div class="ovm-ch">' + svg('list', 15) + '<h3>Recent activity</h3><span class="sub" style="margin-left:auto">cluster task log</span></div>'
+    + _ovTasks(D) + '</div>';
 
-  // Health — up count + per-service status dots (auto cluster checks + custom).
-  const _hNow=Date.now()/1000;
-  const _hsvc=hKeys.map(function(k){
-    const info=hc[k];
-    const hist=(info.history||[]).map(h=>typeof h==='object'&&h?h:{up:!!h,latency_ms:null,ts:null});
-    const up=info.up===true;
-    let downStr='down';
-    if(!up && hist.length){
-      let since=null;
-      for(let i=hist.length-1;i>=0;i--){ if(hist[i].up){ since=(hist[i+1]&&hist[i+1].ts)||null; break; } if(i===0&&!hist[0].up) since=hist[0].ts; }
-      if(since){ const m=Math.max(0,Math.round((_hNow-since)/60)); downStr='down '+(m<60?m+'m':Math.floor(m/60)+'h'+(m%60?(m%60)+'m':'')); }
-    }
-    return {k:k,up:up,downStr:downStr};
-  });
-  const _hIssues=_hsvc.filter(s=>!s.up);
-  const _hStatClr=_hIssues.length===0?'#22C55E':'#EF4444';
-  const _hStatLbl=_hIssues.length===0?'All systems operational':(_hIssues.length+' need'+(_hIssues.length===1?'s':'')+' attention');
-  // Per-service status grid — one rounded square per service (green up / red down).
-  const _hGrid='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;padding-top:12px;border-top:1px solid var(--c-border)">'
-    +_hsvc.map(s=>'<span title="'+esc(s.k)+(s.up?'':' · '+s.downStr)+'" style="width:9px;height:9px;border-radius:2px;flex-shrink:0;background:'+(s.up?'#22C55E':'#EF4444')+(s.up?'':';box-shadow:0 0 5px #EF444466')+'"></span>').join('')
-    +'</div>';
-  const healthCard=hKeys.length
-    ? _ovRich({page:'health',icon:svg('activity',13),label:'Health',
-        badge:_hIssues.length?'<span class="badge badge-down">'+_hIssues.length+' down</span>':'',
-        body:'<div style="display:flex;align-items:center;gap:9px"><span style="width:9px;height:9px;border-radius:50%;background:'+_hStatClr+';box-shadow:0 0 0 3px '+_hStatClr+'22;flex-shrink:0"></span>'
-          +'<span style="font-size:13px;font-weight:600;color:'+_hStatClr+'">'+_hStatLbl+'</span></div>'
-          +'<div style="font-size:11px;color:var(--c-muted);margin-top:5px;margin-left:18px">'+hUp+' / '+hKeys.length+' checks up</div>'
-          +_hGrid})
-    : _ovRich({page:'health',icon:svg('activity',13),label:'Health',body:'<div style="font-size:12px;color:var(--c-muted);padding:6px 0">Waiting for cluster data…</div>'});
+  // Preserve the live chart block across the every-tick innerHTML rebuild.
+  var savedCluster = el('ov-cluster-charts');
+  if (savedCluster) savedCluster.remove();
 
-  const _shieldChkSvg='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>';
-  const row3=''
-    +'<div class="sec-hdr">'+_shieldChkSvg+'<h2 class="sec-hdr-title">Reliability</h2><span class="sec-hdr-sub">Backups and service health</span></div>'
-    +'<div class="hd-row-2">'+backupsCard+healthCard+'</div>';
-
-  // Preserve the chart blocks (canvases + legends + confidence pill) across the
-  // every-tick innerHTML rebuild so Chart.js instances stay live.
-  const savedCluster=el('ov-cluster-charts');
-  const savedNet=el('ov-net-chart');
-  const savedStor=el('ov-storage-chart');
-  // Preserve the storage pill row too — its Custom-date popover must survive
-  // the every-tick rebuild while the user is picking a range.
-  const savedStorPills=el('ov-stor-pills');
-  if(savedCluster) savedCluster.remove();
-  if(savedNet) savedNet.remove();
-  if(savedStor) savedStor.remove();
-  if(savedStorPills) savedStorPills.remove();
-
-  // Section wrappers + the page's space-y-6 rhythm — without them every block
-  // was a direct child and the section headers sat flush against the card above.
-  ovEl.className='space-y-6';
-  ovEl.innerHTML='<section>'+row1+'</section><section>'+row2+'</section><section>'+rowNet+'</section><section>'+row3+'</section>';
+  ovEl.className = 'space-y-6';
+  ovEl.innerHTML =
+    '<section>' + _ovVerdict(D) + '</section>'
+    + '<section>' + _ovTiles(D) + '</section>'
+    + '<section class="ovm-cols c-2-1">' + attCard + pulseCard + '</section>'
+    + '<section class="ovm-cols c-2-1">' + loadCard + consumeCard + '</section>'
+    + '<section>' + taskCard + '</section>';
   _histSchedule();
 
-  // Reattach saved blocks in place of the fresh placeholders.
-  const _ovRestore=(saved,id)=>{
-    if(!saved) return;
-    const ph=el(id);
-    if(ph&&ph!==saved) ph.replaceWith(saved);
-  };
-  _ovRestore(savedCluster,'ov-cluster-charts');
-  _ovRestore(savedNet,'ov-net-chart');
-  _ovRestore(savedStor,'ov-storage-chart');
-  _ovRestore(savedStorPills,'ov-stor-pills');
+  // Reattach the preserved chart block over its fresh placeholder.
+  if (savedCluster) {
+    var ph = el('ov-cluster-charts');
+    if (ph && ph !== savedCluster) ph.replaceWith(savedCluster);
+  }
 
-  // Throttle routine chart reloads to once per 5 min (WS fires every 10s), but
-  // reload immediately if a chart is missing or its canvas got orphaned.
-  const now=Date.now();
-  const _ovBroken=cid=>{const c=_charts[cid];return !c||!c.canvas||!c.canvas.isConnected||c.canvas!==el(cid);};
-  const _ovNeedsBuild=_ovBroken('chart-ov-res')||_ovBroken('chart-ov-net')||_ovBroken('chart-ov-storage');
-  if(_ovNeedsBuild||now-(_ovChartTs||0)>300000){
-    _ovChartTs=now;
-    setTimeout(()=>{
-      loadOvResources(_histGetHours('ov-infra'));
-      loadOvNetwork(_histGetHours('ov-net'));
-      loadOvStorageForecast(_histGetHours('ov-stor'));
-    },0);
+  // Throttle the chart reload to once per 5 min (WS fires every ~10s); reload
+  // immediately if the chart is missing or its canvas got orphaned.
+  var now = Date.now();
+  var c = _charts['chart-ov-res'];
+  var broken = !c || !c.canvas || !c.canvas.isConnected || c.canvas !== el('chart-ov-res');
+  if (broken || now - (_ovChartTs || 0) > 300000) {
+    _ovChartTs = now;
+    setTimeout(function () { loadOvResources(_histGetHours('ov-infra')); }, 0);
   }
 }

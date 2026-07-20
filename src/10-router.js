@@ -356,7 +356,7 @@ async function showPage(name, opts) {
   sidebarClose();
   if(name==='proxmox') { setTimeout(()=>{loadPxHistory(); if(typeof _cmpInit==='function')_cmpInit();},0); }
   if(name==='tars') setTimeout(()=>{ if(typeof _tarsPageShow==='function') _tarsPageShow(); },0);
-  if(name==='overview')      { setTimeout(()=>{loadOvResources(_histGetHours('ov-infra'));loadOvNetwork(_histGetHours('ov-net'));loadOvStorageForecast(_histGetHours('ov-stor'));if(typeof _loadPbsDetail==='function')_loadPbsDetail();},0); }
+  if(name==='overview')      { setTimeout(()=>{loadOvResources(_histGetHours('ov-infra'));if(typeof _loadPbsDetail==='function')_loadPbsDetail();},0); }
   if(name==='topology')      _deferInit('_topoInit');
   if(name==='storage')       _deferInit('_storageInit');
   if(name==='network')       { _deferInit('_networkInit'); setTimeout(()=>{ if(typeof loadPxNetHistory==='function' && el('chart-pxnet-in')) loadPxNetHistory(); },0); }
