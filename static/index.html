@@ -1372,18 +1372,14 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-cols { display: grid; gap: 16px; }
 .ovm-cols.c-2-1 { grid-template-columns: 1.7fr 1fr; }
 @media (max-width: 900px){ .ovm-cols.c-2-1 { grid-template-columns: 1fr; } }
-/* lightweight in-card header */
-.ovm-ch { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
-.ovm-ch svg { color: var(--c-accent); flex-shrink: 0; }
-.ovm-ch h3 { font-size: 14px; font-weight: 600; margin: 0; }
-.ovm-ch .sub { font-size: 11px; color: var(--c-muted); }
-/* needs-attention feed — hairline rows, dot + word severity (no per-row box, no side rail, no icon square) */
+.ovm-card { padding: 16px; }
+.ovm-live { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--c-muted); }
+/* needs-attention feed — hairline rows with word severity (no redundant dot) */
 .ovm-att { display: flex; flex-direction: column; }
-.ovm-att-row { display: grid; grid-template-columns: 8px 62px 1fr auto; gap: 13px; align-items: center;
+.ovm-att-row { display: grid; grid-template-columns: 62px 1fr auto; gap: 13px; align-items: center;
   padding: 12px 2px; border-top: 1px solid var(--c-border); cursor: pointer; transition: background-color .12s ease; }
 .ovm-att-row:first-child { border-top: none; }
 .ovm-att-row:hover { background: var(--c-hover); }
-.ovm-att-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sev); }
 .ovm-att-sev { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--sev); }
 .ovm-att-body { min-width: 0; }
 .ovm-att-t { font-size: 13px; font-weight: 600; color: var(--c-text); }
@@ -1392,7 +1388,7 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-att-row:hover .ovm-att-go { color: var(--c-muted); }
 .ovm-att-empty { display: flex; align-items: center; gap: 9px; padding: 14px 2px; font-size: 13px; color: var(--c-muted); }
 .ovm-att-empty svg { color: #22C55E; flex-shrink: 0; }
-/* node rail */
+/* compact node activity windows — rolling 30-second CPU/RAM traces */
 .ovm-noderail { display: flex; flex-direction: column; gap: 7px; }
 .ovm-node { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 11px 12px; border-radius: 9px; background: var(--c-bg); border: 1px solid var(--c-border); }
 .ovm-node-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1400,9 +1396,21 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-nm { font-size: 12.5px; font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovm-node-chip { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 2px 6px; border-radius: 5px; white-space: nowrap; }
 .ovm-node-meta { font-size: 10.5px; color: var(--c-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; align-self: center; }
-.ovm-metric { display: grid; grid-template-columns: 30px 1fr 42px; gap: 8px; align-items: center; margin-top: 7px; grid-column: 1 / -1; }
-.ovm-metric .ml { font-size: 10px; color: var(--c-dim); text-transform: uppercase; letter-spacing: .04em; }
-.ovm-metric .mv { font-size: 11px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: var(--c-text); }
+.ovm-node-window { position:relative; height:76px; margin-top:7px; grid-column:1/-1; overflow:hidden; border-radius:6px;
+  border:1px solid var(--c-border); background-color:var(--c-card);
+  background-image:linear-gradient(to right, var(--c-border) 1px, transparent 1px),linear-gradient(to top, var(--c-border) 1px, transparent 1px);
+  background-size:10% 100%,100% 50%; }
+.ovm-node-window svg { position:absolute; inset:4px 6px 18px; width:calc(100% - 12px); height:52px; overflow:visible; }
+.ovm-trace { fill:none; stroke-width:1.8; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
+.ovm-trace-cpu { stroke:var(--c-accent); }
+.ovm-trace-ram { stroke:#22C55E; opacity:.9; }
+.ovm-node-values { position:absolute; top:5px; left:8px; display:flex; gap:10px; padding:2px 5px; border-radius:4px;
+  background:color-mix(in srgb, var(--c-card) 82%, transparent); font-size:9px; color:var(--c-muted); text-transform:uppercase; letter-spacing:.03em; }
+.ovm-node-values b { margin-left:2px; font-size:10px; color:var(--c-text); font-variant-numeric:tabular-nums; }
+.ovm-node-values .cpu { color:var(--c-accent); }
+.ovm-node-values .ram { color:#22C55E; }
+.ovm-node-window-foot { position:absolute; left:7px; right:7px; bottom:3px; display:flex; justify-content:space-between; gap:6px;
+  font-size:8.5px; color:var(--c-dim); font-variant-numeric:tabular-nums; }
 .ovm-node-foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--c-border); font-size: 11px; color: var(--c-muted); }
 .ovm-node-foot svg { vertical-align: -2px; color: var(--c-muted); }
 /* leaderboard */

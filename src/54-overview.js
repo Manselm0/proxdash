@@ -6,7 +6,7 @@
 //   • Needs attention — a synthesized, severity-ranked feed built across every
 //     subsystem (nodes, quorum, Ceph, backups, storage, updates, certs, health,
 //     firewall, 2FA, stopped guests) — each row navigates to its owning page
-//   • Cluster pulse — a per-node rail (CPU/RAM/load/iowait) + a Ceph one-liner
+//   • Node activity — compact per-node 30-second CPU/RAM traces + Ceph status
 //   • Cluster load — the live utilization history chart (loadOvResources)
 //   • Top consumers — the hottest guests, CPU⇄RAM toggle
 //   • Recent activity — the cluster task log
@@ -19,6 +19,8 @@
 
 var _ovLeadMode = 'cpu';          // Top-consumers toggle, persisted across ticks
 var _ovLastData = null;           // last snapshot, so the toggle can re-render
+var _ovPulseHistory = {};         // rolling 30-second node samples (3-second cadence)
+var _ovPulseLastSample = 0;
 
 function _ovAccent() {
   return (getComputedStyle(document.documentElement).getPropertyValue('--c-accent') || '#E57000').trim();
@@ -170,11 +172,43 @@ function _ovAttention(D) {
   if (!D.att.length) return '<div class="ovm-att-empty">' + svg('check', 16) + ' Nothing needs attention — every node, backup and health check is green.</div>';
   return '<div class="ovm-att">' + D.att.map(function (a) {
     return '<div class="ovm-att-row" style="--sev:' + _ovSev(a.sev) + '" onclick="showPage(\'' + esc(a.page) + '\')" title="Open ' + esc(a.page) + '">'
-      + '<span class="ovm-att-dot"></span><span class="ovm-att-sev">' + _OV_SEVW[a.sev] + '</span>'
+      + '<span class="ovm-att-sev">' + _OV_SEVW[a.sev] + '</span>'
       + '<div class="ovm-att-body"><div class="ovm-att-t">' + esc(a.t) + '</div><div class="ovm-att-d">' + esc(a.d) + '</div></div>'
       + '<span class="ovm-att-go">' + esc(a.page) + ' &rsaquo;</span></div>';
   }).join('') + '</div>';
 }
+
+function _ovPulseSample(D) {
+  var now = Date.now();
+  if (now - _ovPulseLastSample < 2500) return;
+  _ovPulseLastSample = now;
+  var live = {};
+  D.nodes.forEach(function (n) {
+    live[n.node] = true;
+    var h = _ovPulseHistory[n.node] || [];
+    h.push({ t: now, cpu: Math.round((n.cpu || 0) * 100), mem: n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0 });
+    _ovPulseHistory[n.node] = h.filter(function (p) { return p.t >= now - 30000; });
+  });
+  Object.keys(_ovPulseHistory).forEach(function (node) { if (!live[node]) delete _ovPulseHistory[node]; });
+}
+
+function _ovPulsePath(points, key, now) {
+  if (!points.length) return '';
+  return points.map(function (p, i) {
+    var x = Math.max(0, Math.min(120, 120 - ((now - p.t) / 30000 * 120)));
+    var y = 50 - Math.max(0, Math.min(100, p[key])) / 100 * 46;
+    return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
+  }).join(' ');
+}
+
+function _ovPulseTick() {
+  if (!_ovLastData || currentPage !== 'overview') return;
+  var D = _ovDerive(_ovLastData);
+  _ovPulseSample(D);
+  var rail = el('ov-node-pulse');
+  if (rail) rail.innerHTML = _ovNodeRail(D);
+}
+setInterval(_ovPulseTick, 3000);
 
 function _ovNodeChip(n) {
   if (n.status !== 'online') return '<span class="ovm-node-chip" style="background:' + _OV_R + '22;color:' + _OV_R + '">offline</span>';
@@ -184,20 +218,32 @@ function _ovNodeChip(n) {
 }
 
 function _ovNodeRail(D) {
-  var acc = _ovAccent();
+  var now = Date.now();
   return '<div class="ovm-noderail">' + D.nodes.map(function (n) {
     var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
+    var pts = _ovPulseHistory[n.node] || [];
     return '<div class="ovm-node">'
       + '<div class="ovm-node-top">' + svg('server', 13) + '<span class="ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
       + '<div class="ovm-node-meta">' + gc + ' guests · ' + fmtUptime(n.uptime) + '</div>'
-      + '<div class="ovm-metric"><span class="ml">CPU</span>' + _ovBar(cp, acc) + '<span class="mv"' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</span></div>'
-      + '<div class="ovm-metric"><span class="ml">RAM</span>' + _ovBar(mp, _OV_G) + '<span class="mv"' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</span></div>'
-      + '<div class="ovm-metric" style="margin-top:5px"><span class="ml">load</span>'
-        + '<span style="grid-column:2/4;font-size:10.5px;color:var(--c-muted)">' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
-          + ' · iowait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</span></div>'
+      + '<div class="ovm-node-window">'
+        + '<svg viewBox="0 0 120 52" preserveAspectRatio="none" role="img" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds">'
+          + '<path class="ovm-trace ovm-trace-ram" d="' + _ovPulsePath(pts, 'mem', now) + '"></path>'
+          + '<path class="ovm-trace ovm-trace-cpu" d="' + _ovPulsePath(pts, 'cpu', now) + '"></path>'
+        + '</svg>'
+        + '<div class="ovm-node-values"><span class="cpu">CPU <b' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</b></span>'
+          + '<span class="ram">RAM <b' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</b></span></div>'
+        + '<div class="ovm-node-window-foot"><span>30s ago</span><span>load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
+          + ' · wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '%</span><span>now</span></div>'
+      + '</div>'
       + '</div>';
   }).join('') + '</div>';
+}
+
+function _ovSectionHeader(icon, title, sub, actions) {
+  return '<div class="sec-hdr">' + _ovSvg(icon, 18) + '<h2 class="sec-hdr-title">' + title + '</h2>'
+    + (sub ? '<span class="sec-hdr-sub">' + sub + '</span>' : '')
+    + (actions ? '<div class="sec-hdr-actions">' + actions + '</div>' : '') + '</div>';
 }
 
 function _ovLeadHtml(D) {
@@ -250,48 +296,41 @@ function renderOverview(data) {
   ovEl.className = ''; ovEl.removeAttribute('style');
   _ovLastData = data;
   var D = _ovDerive(data);
+  _ovPulseSample(D);
   var hdr = el('overview-hdr-meta'); if (hdr) hdr.innerHTML = _ovHdrMeta(D);   // house inline status strip
 
   var acc = _ovAccent();
 
-  // Attention card (flagship) + Cluster pulse (node rail + Ceph line)
-  var attCard = '<div class="hd-card" style="padding:16px">'
-    + '<div class="ovm-ch">' + svg('activity', 15) + '<h3>Needs attention</h3>'
-      + (D.att.length ? '<span class="sub" style="margin-left:auto">' + D.att.length + ' open</span>' : '') + '</div>'
-    + _ovAttention(D) + '</div>';
+  // Attention card (flagship) + compact rolling node activity windows.
+  var attCard = '<section>' + _ovSectionHeader('activity', 'Needs attention', D.att.length ? D.att.length + ' open' : 'No open issues')
+    + '<div class="hd-card ovm-card">' + _ovAttention(D) + '</div></section>';
   var cephLine = D.cephOn
     ? '<div class="ovm-node-foot"><span>' + svg('database', 12) + ' Ceph ' + esc(String(D.ceph.health || '').replace('HEALTH_', ''))
         + (D.ceph.num_up_osds != null ? ' · ' + D.ceph.num_up_osds + '/' + D.ceph.num_osds + ' OSDs' : '') + '</span>'
         + '<span>' + D.cephPct + '% of ' + fmtBytes(D.ceph.usable_total_bytes) + '</span></div>'
     : '';
-  var pulseCard = '<div class="hd-card" style="padding:16px">'
-    + '<div class="ovm-ch">' + svg('server', 15) + '<h3>Cluster pulse</h3>'
-      + '<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--c-muted)"><span class="sdot sdot-green dot-live"></span>live</span></div>'
-    + _ovNodeRail(D) + cephLine + '</div>';
+  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'Last 30 seconds · 3-second samples', '<span class="ovm-live"><span class="sdot sdot-green dot-live"></span>live</span>')
+    + '<div class="hd-card ovm-card"><div id="ov-node-pulse">' + _ovNodeRail(D) + '</div>' + cephLine + '</div></section>';
 
   // Cluster load chart (live history) — this block is preserved across ticks.
-  var loadCard = '<div class="hd-card" style="padding:16px">'
-    + '<div class="ovm-ch">' + svg('activity', 15) + '<h3>Cluster load</h3><span class="sub">utilization · % of capacity</span>'
-      + '<span style="margin-left:auto" onclick="event.stopPropagation()">' + _histPillRow('ov-infra', ['1d', '7d', '30d', 'All', 'Custom'], { stopPropagation: true }) + '</span></div>'
-    + '<div id="ov-cluster-charts">'
+  var loadCard = '<section>' + _ovSectionHeader('activity', 'Cluster load', 'Utilization · % of capacity', '<span onclick="event.stopPropagation()">' + _histPillRow('ov-infra', ['1d', '7d', '30d', 'All', 'Custom'], { stopPropagation: true }) + '</span>')
+    + '<div class="hd-card ovm-card"><div id="ov-cluster-charts">'
       + '<div class="stor-hdr"><span class="stor-hdr-label">CPU &amp; RAM</span>'
         + '<span class="stor-hdr-spacer"></span><span class="stor-legend" id="chart-ov-res-leg"></span></div>'
       + '<div style="position:relative;height:200px"><canvas id="chart-ov-res"></canvas></div>'
-    + '</div></div>';
+    + '</div></div></section>';
 
   // Top consumers leaderboard (CPU⇄RAM toggle)
-  var consumeCard = '<div class="hd-card" style="padding:16px">'
-    + '<div class="ovm-ch">' + _ovSvg('trending-up', 15) + '<h3>Top consumers</h3>'
-      + '<span class="ovm-tabs" style="margin-left:auto">'
+  var consumeActions = '<span class="ovm-tabs">'
         + '<button class="ovm-tab' + (_ovLeadMode === 'cpu' ? ' active' : '') + '" id="ov-lead-tab-cpu" onclick="_ovSetLead(\'cpu\')">CPU</button>'
         + '<button class="ovm-tab' + (_ovLeadMode === 'mem' ? ' active' : '') + '" id="ov-lead-tab-mem" onclick="_ovSetLead(\'mem\')">RAM</button>'
-      + '</span></div>'
-    + '<div id="ov-lead">' + _ovLeadHtml(D) + '</div></div>';
+      + '</span>';
+  var consumeCard = '<section>' + _ovSectionHeader('trending-up', 'Top consumers', 'Hottest running guests', consumeActions)
+    + '<div class="hd-card ovm-card"><div id="ov-lead">' + _ovLeadHtml(D) + '</div></div></section>';
 
   // Recent activity (task log)
-  var taskCard = '<div class="hd-card" style="padding:16px">'
-    + '<div class="ovm-ch">' + svg('list', 15) + '<h3>Recent activity</h3><span class="sub" style="margin-left:auto">cluster task log</span></div>'
-    + _ovTasks(D) + '</div>';
+  var taskCard = '<section>' + _ovSectionHeader('list', 'Recent activity', 'Cluster task log')
+    + '<div class="hd-card ovm-card">' + _ovTasks(D) + '</div></section>';
 
   // Preserve the live chart block across the every-tick innerHTML rebuild.
   var savedCluster = el('ov-cluster-charts');
