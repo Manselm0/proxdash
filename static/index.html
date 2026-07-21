@@ -1373,9 +1373,6 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-cols.c-2-1 { grid-template-columns: 1.7fr 1fr; }
 @media (max-width: 900px){ .ovm-cols.c-2-1 { grid-template-columns: 1fr; } }
 .ovm-card { padding: 16px; }
-.ovm-node-avg { display:inline-flex; align-items:baseline; gap:4px; font-size:11px; color:var(--c-muted); font-variant-numeric:tabular-nums; }
-.ovm-node-avg + .ovm-node-avg { margin-left:10px; }
-.ovm-node-avg b { color:var(--c-text); font-weight:600; }
 /* needs-attention feed — hairline rows with word severity (no redundant dot) */
 .ovm-att { display: flex; flex-direction: column; }
 .ovm-att-row { display: grid; grid-template-columns: 62px 1fr auto; gap: 13px; align-items: center;
@@ -1411,12 +1408,17 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-readings .cpu { color:var(--c-accent); }
 .ovm-node-readings .ram { color:#22C55E; }
 .ovm-node-readings .hot { color:#EF4444; }
-.ovm-node-detail { margin-top:auto; padding-top:7px; font-size:11px; line-height:1.4; color:var(--c-dim); font-variant-numeric:tabular-nums; }
 .ovm-node-window { min-width:0; padding:10px 12px 8px; overflow:hidden; border-radius:7px; background:var(--c-card); }
 .ovm-node-chart-hdr { margin-bottom:4px; }
 .ovm-node-chart { position:relative; height:92px; }
 .ovm-node-chart canvas { display:block; width:100% !important; height:100% !important; }
 .ovm-node-chart-empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; font-size:11.5px; color:var(--c-muted); }
+.ovm-node-chart-avgs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:5px; font-size:11px; font-variant-numeric:tabular-nums; }
+.ovm-node-chart-avgs > span { display:flex; align-items:baseline; justify-content:space-between; gap:8px; color:var(--c-muted); }
+.ovm-node-chart-avgs b { font-weight:650; }
+.ovm-node-chart-avgs .cpu { color:var(--c-accent); }
+.ovm-node-chart-avgs .ram { color:#22C55E; }
+.ovm-node-chart-avgs .hot { color:#EF4444; }
 .ovm-node-empty { grid-column:1/-1; display:flex; align-items:center; gap:8px; padding:22px 16px; font-size:13px; color:var(--c-muted); }
 .ovm-node-empty svg { color:var(--c-muted); }
 @media (max-width:1100px) {

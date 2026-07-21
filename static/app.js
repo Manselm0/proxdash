@@ -5344,31 +5344,22 @@ function _ovNodeChartId(node) { return 'ov-node-chart-' + _ovNodeKey(node); }
 function _ovNodeLegendId(node) { return 'ov-node-legend-' + _ovNodeKey(node); }
 function _ovNodeSlot(node, slot) { return 'ov-node-' + slot + '-' + _ovNodeKey(node); }
 
-// Capacity-weighted averages across the visible two-minute window. Weighting
-// CPU by cores and RAM by installed bytes makes differently sized nodes
-// contribute in proportion to the capacity they actually represent.
-function _ovPulseAverages(D) {
+// Per-node averages across the visible two-minute window. These sit directly
+// beneath each node's graph so the current readings on the left can be compared
+// with that node's recent baseline without a detached cluster-wide summary.
+function _ovNodeAverages(n) {
+  if (n.status !== 'online') return { cpu: null, mem: null };
   var cutoff = Date.now() - _OV_PULSE_WINDOW_MS;
-  var cpuSum = 0, cpuWeight = 0, memSum = 0, memWeight = 0;
-  D.nodes.forEach(function (n) {
-    if (n.status !== 'online') return;
-    var cw = n.maxcpu || 0, mw = n.maxmem || 0;
-    (_ovPulseHistory[n.node] || []).forEach(function (p) {
-      if (p.t < cutoff) return;
-      if (cw && isFinite(p.cpu)) { cpuSum += p.cpu * cw; cpuWeight += cw; }
-      if (mw && isFinite(p.mem)) { memSum += p.mem * mw; memWeight += mw; }
-    });
+  var cpuSum = 0, cpuN = 0, memSum = 0, memN = 0;
+  (_ovPulseHistory[n.node] || []).forEach(function (p) {
+    if (p.t < cutoff) return;
+    if (isFinite(p.cpu)) { cpuSum += p.cpu; cpuN++; }
+    if (isFinite(p.mem)) { memSum += p.mem; memN++; }
   });
   return {
-    cpu: Math.round(cpuWeight ? cpuSum / cpuWeight : D.cpuPct),
-    mem: Math.round(memWeight ? memSum / memWeight : D.memPct)
+    cpu: Math.round(cpuN ? cpuSum / cpuN : (n.cpu || 0) * 100),
+    mem: Math.round(memN ? memSum / memN : (n.maxmem ? (n.mem || 0) / n.maxmem * 100 : 0))
   };
-}
-
-function _ovPulseAverageHtml(D) {
-  var a = _ovPulseAverages(D);
-  return '<span class="ovm-node-avg"><span>Avg CPU</span> <b id="ov-node-avg-cpu">' + a.cpu + '%</b></span>'
-    + '<span class="ovm-node-avg"><span>Avg RAM</span> <b id="ov-node-avg-ram">' + a.mem + '%</b></span>';
 }
 
 function _ovRenderNodeCharts(D) {
@@ -5445,6 +5436,7 @@ function _ovNodeRail(D) {
   if (!D.nodes.length) return '<div class="ovm-node-empty">' + svg('server', 16) + ' No node data is available.</div>';
   return D.nodes.map(function (n) {
     var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
+    var av = _ovNodeAverages(n);
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
     var online = n.status === 'online';
     return '<article class="ovm-node" id="' + _ovNodeSlot(n.node, 'row') + '">'
@@ -5455,14 +5447,16 @@ function _ovNodeRail(D) {
           + '<div class="stat-mini"><span class="stat-mini-lbl">CPU</span><span class="stat-mini-val cpu' + (online && cp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'cpu') + '">' + (online ? cp + '%' : '—') + '</span></div>'
           + '<div class="stat-mini"><span class="stat-mini-lbl">Memory</span><span class="stat-mini-val ram' + (online && mp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'ram') + '">' + (online ? mp + '%' : '—') + '</span></div>'
         + '</div>'
-        + '<div class="ovm-node-detail" id="' + _ovNodeSlot(n.node, 'detail') + '">Load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
-          + ' · I/O wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</div>'
       + '</div>'
       + '<div class="ovm-node-window">'
         + '<div class="sub-hdr ovm-node-chart-hdr">' + svg('activity', 12) + '<span class="sub-hdr-title">CPU &amp; memory</span>'
           + '<div class="sub-hdr-actions" id="' + _ovNodeLegendId(n.node) + '"></div></div>'
         + '<div class="ovm-node-chart"><canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last two minutes"></canvas>'
           + '<div class="ovm-node-chart-empty" id="' + _ovNodeSlot(n.node, 'empty') + '"></div></div>'
+        + '<div class="ovm-node-chart-avgs">'
+          + '<span><span>Avg CPU</span><b class="cpu' + (av.cpu != null && av.cpu > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'avgcpu') + '">' + (av.cpu == null ? '—' : av.cpu + '%') + '</b></span>'
+          + '<span><span>Avg RAM</span><b class="ram' + (av.mem != null && av.mem > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'avgram') + '">' + (av.mem == null ? '—' : av.mem + '%') + '</b></span>'
+        + '</div>'
       + '</div>'
       + '</article>';
   }).join('');
@@ -5470,9 +5464,6 @@ function _ovNodeRail(D) {
 
 function _ovUpdateNodeRail(D) {
   var host = el('ov-node-pulse'); if (!host) return;
-  var avgs = _ovPulseAverages(D), avgCpu = el('ov-node-avg-cpu'), avgRam = el('ov-node-avg-ram');
-  if (avgCpu) avgCpu.textContent = avgs.cpu + '%';
-  if (avgRam) avgRam.textContent = avgs.mem + '%';
   var sig = D.nodes.map(function (n) { return n.node; }).join('\u001f');
   if (host.dataset.sig !== sig) {
     host.innerHTML = _ovNodeRail(D);
@@ -5494,9 +5485,9 @@ function _ovUpdateNodeRail(D) {
       var cpu = el(_ovNodeSlot(n.node, 'cpu')), ram = el(_ovNodeSlot(n.node, 'ram'));
       if (cpu) { cpu.textContent = online ? cp + '%' : '—'; cpu.classList.toggle('hot', online && cp > 85); }
       if (ram) { ram.textContent = online ? mp + '%' : '—'; ram.classList.toggle('hot', online && mp > 85); }
-      var detail = el(_ovNodeSlot(n.node, 'detail'));
-      if (detail) detail.textContent = 'Load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
-        + ' · I/O wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores';
+      var av = _ovNodeAverages(n), avgCpu = el(_ovNodeSlot(n.node, 'avgcpu')), avgRam = el(_ovNodeSlot(n.node, 'avgram'));
+      if (avgCpu) { avgCpu.textContent = av.cpu == null ? '—' : av.cpu + '%'; avgCpu.classList.toggle('hot', av.cpu != null && av.cpu > 85); }
+      if (avgRam) { avgRam.textContent = av.mem == null ? '—' : av.mem + '%'; avgRam.classList.toggle('hot', av.mem != null && av.mem > 85); }
     });
   }
   _ovRenderNodeCharts(D);
@@ -5566,7 +5557,7 @@ function renderOverview(data) {
   // Attention card (flagship) + full-width rolling node activity section.
   var attCard = '<section>' + _ovSectionHeader('activity', 'Needs attention', D.att.length ? D.att.length + ' open' : 'No open issues')
     + '<div class="hd-card ovm-card">' + _ovAttention(D) + '</div></section>';
-  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'CPU and memory · last 2 minutes', _ovPulseAverageHtml(D))
+  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'CPU and memory · last 2 minutes')
     + '<div class="hd-card ovm-node-card"><div class="ovm-noderail" id="ov-node-pulse"></div></div></section>';
 
   // Cluster load chart (live history) — this block is preserved across ticks.
@@ -8639,4 +8630,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='df6d60895360';
+;window.__BUILD__='7219605f969d';
