@@ -41,13 +41,6 @@ window.addEventListener('unhandledrejection',function(ev){
 });
 // Apply dark mode before render to avoid FOUC. Default: dark. Only light if explicitly opted out.
 (function(){try{if(localStorage.getItem('hd-dark')!=='0')document.documentElement.classList.add('dark');}catch(e){document.documentElement.classList.add('dark');}})();
-// Temporary iOS rubber-band comparison modes. Query-only so the normal app is
-// unchanged while an operator tests real Safari compositing behavior:
-//   ?iosbar=solid | ?iosbar=tint | ?iosbar=fixed
-(function(){try{
-  var v=new URLSearchParams(location.search).get('iosbar');
-  if(v==='solid'||v==='tint'||v==='fixed') document.documentElement.classList.add('iosbar-'+v);
-}catch(e){}})();
 // Custom accent from a hex color (the Settings → Appearance color input).
 // Overrides the :root/html.dark --c-accent tokens via an injected <style> so
 // opacity formulas (rgba(var(--c-accent-rgb),…)) stay in tune. Persisted under
@@ -1891,35 +1884,24 @@ html.dark .mobile-hdr::before { background:rgba(0,0,0,.4); }
 
 /* ── Mobile overrides ── */
 @media (max-width:767px) {
-  /* Mobile = native document scroll (so the page rubber-band-bounces and the
-     Safari URL bar collapses), with the header as a position:sticky element so
-     it bounces WITH the page instead of floating fixed above it. */
+  /* Mobile keeps native document scroll so the page rubber-band-bounces and the
+     Safari URL bar collapses. The frosted header stays fixed above that scroll:
+     real-device testing confirmed this prevents WebKit from shrouding its
+     foreground while content bounces at the bottom. */
   html, body { overscroll-behavior-y: auto; }
   body { display: block !important; height: auto !important; min-height: 100dvh; overflow-x: hidden; overflow-y: visible !important; }
   #main-wrap { margin-left: 0 !important; display: block !important; }
-  #pages-root { overflow: visible !important; height: auto !important; overscroll-behavior-y: auto !important; }
-  .mobile-hdr { display: flex; padding-top: max(10px, env(safe-area-inset-top)); position: sticky; top: 0; z-index: 30; }
-  /* Temporary real-device comparison modes selected by ?iosbar=. These are
-     deliberately isolated from the default URL and will be removed once the
-     stable iOS treatment is chosen. */
-  html.iosbar-solid .mobile-hdr::before {
-    background:var(--c-bg); -webkit-backdrop-filter:none; backdrop-filter:none;
-  }
-  html.iosbar-tint .mobile-hdr::before {
-    background:rgba(255,255,255,.88); -webkit-backdrop-filter:none; backdrop-filter:none;
-  }
-  html.dark.iosbar-tint .mobile-hdr::before { background:rgba(0,0,0,.88); }
-  html.iosbar-fixed .mobile-hdr { position:fixed; }
-  html.iosbar-fixed #pages-root { padding-top:var(--mob-hdr-h,52px); }
+  #pages-root { overflow: visible !important; height: auto !important; overscroll-behavior-y: auto !important; padding-top:var(--mob-hdr-h,52px); }
+  .mobile-hdr { display:flex; padding-top:max(10px, env(safe-area-inset-top)); position:fixed; top:0; z-index:30; }
   #sidebar-expand-btn { display: none !important; }
   #sidebar { width: min(280px, 85vw) !important; padding-left: env(safe-area-inset-left); }
-  /* Content flows right after the sticky bar — minimal top gap so text starts
+  /* Content flows after the fixed bar's reserved offset — minimal top gap so text starts
      directly below the bar; normal gutters on the sides + safe-area bottom. */
   #pages-content { padding: 4px 0 !important; padding-bottom: max(14px, env(safe-area-inset-bottom)) !important; }
 
   /* Full-bleed pages (map/topology) are authored as position:absolute;inset:0
      against a fixed-height scroller. Under mobile document-scroll the scroller has
-     no height, so they collapse — pin them to the viewport below the sticky bar
+     no height, so they collapse — pin them to the viewport below the fixed bar
      instead. --mob-hdr-h is measured + set by _mobileHdrSync(). */
   #page-topology.active {
     position: fixed !important;
