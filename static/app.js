@@ -5317,8 +5317,8 @@ function _ovRenderNodeCharts(D) {
       return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
     };
     var datasets = [
-      _dsAvgOnly('CPU', bucket('cpu'), acc),
-      _dsAvgOnly('RAM', bucket('mem'), _OV_G)
+      _dsAvgOnly('CPU', bucket('cpu'), acc, { gradient: 'soft' }),
+      _dsAvgOnly('RAM', bucket('mem'), _OV_G, { gradient: 'soft' })
     ];
     _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, 1 / 120, {
       noLegend: true, yMin: 0, yMax: 100, yMaxTicks: 3,
@@ -5327,9 +5327,8 @@ function _ovRenderNodeCharts(D) {
       xMaxTicks: 3, xTickValues: [now - 30000, now - 15000, now],
       xTick: function (v) {
         var ago = Math.max(0, Math.round((Date.now() - v) / 1000));
-        return ago < 2 ? 'now' : '−' + ago + 's';
-      },
-      xTitle: 'Time', yTitle: 'Usage %'
+        return ago < 2 ? 'now' : ago + 's';
+      }
     });
     _wireChartHover(_ovNodeChartId(n.node));
   });
@@ -6570,7 +6569,6 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
              ...(opts && opts.xMin != null ? { min: opts.xMin } : {}),
              ...(opts && opts.xMax != null ? { max: opts.xMax } : {}),
              ...((opts && opts.xTickValues) ? { afterBuildTicks: (s) => { s.ticks = opts.xTickValues.map(value => ({ value })); } } : {}),
-             ...(opts && opts.xTitle ? { title: { display: true, text: opts.xTitle, font: { size: 10, weight: '600' } } } : {}),
              ticks: { maxTicksLimit: (opts && opts.xMaxTicks) || 8, font: { size: 10 },
                // Keep time labels horizontal and let autoSkip thin them when the
                // chart is narrow (square window / sidebar open) — rotated or
@@ -6580,7 +6578,6 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
         y: { beginAtZero: true, stacked,
              ...(opts && opts.yMin != null ? { min: opts.yMin } : {}),
              ...(opts && opts.yMax != null ? { max: opts.yMax } : {}),
-             ...(opts && opts.yTitle ? { title: { display: true, text: opts.yTitle, font: { size: 10, weight: '600' } } } : {}),
              ticks: { maxTicksLimit: (opts && opts.yMaxTicks) || 6, font: { size: 10 },
              callback: v => yFmt ? yFmt(v) : v },
              ...(opts && opts.yAxisWidth ? { afterFit: (s) => { s.width = opts.yAxisWidth; } } : {}) }
@@ -8503,4 +8500,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='a8d98c1e68b2';
+;window.__BUILD__='f47f1b627cc3';

@@ -380,7 +380,6 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
              ...(opts && opts.xMin != null ? { min: opts.xMin } : {}),
              ...(opts && opts.xMax != null ? { max: opts.xMax } : {}),
              ...((opts && opts.xTickValues) ? { afterBuildTicks: (s) => { s.ticks = opts.xTickValues.map(value => ({ value })); } } : {}),
-             ...(opts && opts.xTitle ? { title: { display: true, text: opts.xTitle, font: { size: 10, weight: '600' } } } : {}),
              ticks: { maxTicksLimit: (opts && opts.xMaxTicks) || 8, font: { size: 10 },
                // Keep time labels horizontal and let autoSkip thin them when the
                // chart is narrow (square window / sidebar open) — rotated or
@@ -390,7 +389,6 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
         y: { beginAtZero: true, stacked,
              ...(opts && opts.yMin != null ? { min: opts.yMin } : {}),
              ...(opts && opts.yMax != null ? { max: opts.yMax } : {}),
-             ...(opts && opts.yTitle ? { title: { display: true, text: opts.yTitle, font: { size: 10, weight: '600' } } } : {}),
              ticks: { maxTicksLimit: (opts && opts.yMaxTicks) || 6, font: { size: 10 },
              callback: v => yFmt ? yFmt(v) : v },
              ...(opts && opts.yAxisWidth ? { afterFit: (s) => { s.width = opts.yAxisWidth; } } : {}) }

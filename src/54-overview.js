@@ -202,8 +202,8 @@ function _ovRenderNodeCharts(D) {
       return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
     };
     var datasets = [
-      _dsAvgOnly('CPU', bucket('cpu'), acc),
-      _dsAvgOnly('RAM', bucket('mem'), _OV_G)
+      _dsAvgOnly('CPU', bucket('cpu'), acc, { gradient: 'soft' }),
+      _dsAvgOnly('RAM', bucket('mem'), _OV_G, { gradient: 'soft' })
     ];
     _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, 1 / 120, {
       noLegend: true, yMin: 0, yMax: 100, yMaxTicks: 3,
@@ -212,9 +212,8 @@ function _ovRenderNodeCharts(D) {
       xMaxTicks: 3, xTickValues: [now - 30000, now - 15000, now],
       xTick: function (v) {
         var ago = Math.max(0, Math.round((Date.now() - v) / 1000));
-        return ago < 2 ? 'now' : '−' + ago + 's';
-      },
-      xTitle: 'Time', yTitle: 'Usage %'
+        return ago < 2 ? 'now' : ago + 's';
+      }
     });
     _wireChartHover(_ovNodeChartId(n.node));
   });
