@@ -5372,7 +5372,7 @@ function _ovPulseAverageHtml(D) {
 }
 
 function _ovRenderNodeCharts(D) {
-  var now = Date.now(), acc = _ovAccent();
+  var now = Date.now(), windowStart = now - _OV_PULSE_WINDOW_MS, acc = _ovAccent();
   D.nodes.forEach(function (n) {
     var pts = _ovPulseHistory[n.node] || [];
     var canvas = el(_ovNodeChartId(n.node)), empty = el(_ovNodeSlot(n.node, 'empty'));
@@ -5387,7 +5387,17 @@ function _ovRenderNodeCharts(D) {
     if (canvas) canvas.style.display = '';
     if (empty) empty.style.display = 'none';
     var bucket = function (key) {
-      return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
+      var labels = pts.map(function (p) { return p.t / 1000; });
+      var avg = pts.map(function (p) { return p[key]; });
+      // The first synchronous render has one current sample while persisted
+      // history is still preloading. Carry that observed value to both window
+      // edges so startup never flashes a lone point/gap; real samples replace
+      // the held segment as soon as the preload completes.
+      if (labels.length) {
+        if (labels[0] * 1000 > windowStart) { labels.unshift(windowStart / 1000); avg.unshift(avg[0]); }
+        if (labels[labels.length - 1] * 1000 < now) { labels.push(now / 1000); avg.push(avg[avg.length - 1]); }
+      }
+      return { labels: labels, avg: avg };
     };
     // Lines stay transparent underneath so the canvas uses the exact same
     // surface color as its widget; the rolling chart also skips the one-shot
@@ -5398,7 +5408,7 @@ function _ovRenderNodeCharts(D) {
     ];
     _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, _OV_PULSE_WINDOW_MS / 3600000, {
       legendTarget: _ovNodeLegendId(n.node), yMin: 0, yMax: 100, yMaxTicks: 3,
-      xMin: now - _OV_PULSE_WINDOW_MS, xMax: now,
+      xMin: windowStart, xMax: now,
       xTime: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } },
       xMaxTicks: 3, xTickValues: [now - _OV_PULSE_WINDOW_MS, now - _OV_PULSE_WINDOW_MS / 2, now],
       xTick: function (v) {
@@ -8629,4 +8639,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='63ebf8cc19ed';
+;window.__BUILD__='9043172c7cd4';

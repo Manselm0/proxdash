@@ -1398,8 +1398,8 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-att-empty { display: flex; align-items: center; gap: 9px; padding: 14px 2px; font-size: 13px; color: var(--c-muted); }
 .ovm-att-empty svg { color: #22C55E; flex-shrink: 0; }
 /* Node activity follows the house chart-section anatomy: one outer card, flat
-   divided entity cells, standard subheads/badges/legends, and one recessed
-   chart well per node. The two-column bound prevents large clusters from
+   divided entity cells, standard subheads/badges/legends, and a borderless
+   chart region per node. The two-column bound prevents large clusters from
    producing an unnecessarily tall overview. */
 .ovm-node-card { overflow:hidden; }
 .ovm-noderail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -1419,7 +1419,7 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-readings .ram { color:#22C55E; }
 .ovm-node-readings .hot { color:#EF4444; }
 .ovm-node-detail { margin-top:auto; padding-top:7px; font-size:11px; line-height:1.4; color:var(--c-dim); font-variant-numeric:tabular-nums; }
-.ovm-node-window { min-width:0; padding:10px 12px 8px; overflow:hidden; border-radius:7px; border:1px solid var(--c-border); background:var(--c-card); }
+.ovm-node-window { min-width:0; padding:10px 12px 8px; overflow:hidden; border-radius:7px; background:var(--c-card); }
 .ovm-node-chart-hdr { margin-bottom:4px; }
 .ovm-node-chart { position:relative; height:92px; }
 .ovm-node-chart canvas { display:block; width:100% !important; height:100% !important; }
