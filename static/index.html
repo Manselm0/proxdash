@@ -1387,17 +1387,11 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-att-row:hover .ovm-att-go { color: var(--c-muted); }
 .ovm-att-empty { display: flex; align-items: center; gap: 9px; padding: 14px 2px; font-size: 13px; color: var(--c-muted); }
 .ovm-att-empty svg { color: #22C55E; flex-shrink: 0; }
-/* Node activity follows the house chart-section anatomy: one outer card, flat
-   divided entity cells, standard subheads/badges/legends, and a borderless
-   chart region per node. The two-column bound prevents large clusters from
-   producing an unnecessarily tall overview. */
-.ovm-node-card { overflow:hidden; }
-.ovm-noderail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+/* Each node is an independent widget with a borderless chart region. The
+   two-column bound prevents large clusters from becoming unnecessarily tall. */
+.ovm-noderail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .ovm-node { display:grid; grid-template-columns:minmax(150px,.7fr) minmax(220px,1.5fr); gap:14px; align-items:stretch;
   min-width:0; padding:14px 16px; }
-.ovm-node:nth-child(even) { border-left:1px solid var(--c-border); }
-.ovm-node:nth-child(n+3) { border-top:1px solid var(--c-border); }
-.ovm-node:last-child:nth-child(odd) { grid-column:1/-1; }
 .ovm-node-info { min-width:0; display:flex; flex-direction:column; }
 .ovm-node-top { margin-bottom:0; min-width:0; }
 .ovm-node-top .badge { flex-shrink:0; }
@@ -1409,7 +1403,7 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-chart canvas { display:block; width:100% !important; height:100% !important; }
 .ovm-node-chart-empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; font-size:11.5px; color:var(--c-muted); }
 .ovm-node-chart-avgs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:5px; font-size:11px; font-variant-numeric:tabular-nums; }
-.ovm-node-chart-avgs > span { display:flex; align-items:baseline; justify-content:space-between; gap:8px; color:var(--c-muted); }
+.ovm-node-chart-avgs > span { display:flex; align-items:baseline; justify-content:flex-start; gap:5px; color:var(--c-muted); }
 .ovm-node-chart-avgs b { font-weight:650; }
 .ovm-node-chart-avgs .cpu { color:var(--c-accent); }
 .ovm-node-chart-avgs .ram { color:#22C55E; }
@@ -1418,9 +1412,6 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-empty svg { color:var(--c-muted); }
 @media (max-width:1100px) {
   .ovm-noderail { grid-template-columns:1fr; }
-  .ovm-node:nth-child(even) { border-left:0; }
-  .ovm-node:nth-child(n+3) { border-top:0; }
-  .ovm-node + .ovm-node { border-top:1px solid var(--c-border); }
 }
 @media (max-width:767px) {
   .ovm-node { grid-template-columns:1fr; gap:10px; padding:12px; }

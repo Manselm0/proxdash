@@ -318,11 +318,11 @@ function _ovNodeChip(n) {
 }
 
 function _ovNodeRail(D) {
-  if (!D.nodes.length) return '<div class="ovm-node-empty">' + svg('server', 16) + ' No node data is available.</div>';
+  if (!D.nodes.length) return '<div class="hd-card ovm-node-empty">' + svg('server', 16) + ' No node data is available.</div>';
   return D.nodes.map(function (n) {
     var av = _ovNodeAverages(n);
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
-    return '<article class="ovm-node" id="' + _ovNodeSlot(n.node, 'row') + '">'
+    return '<article class="hd-card ovm-node" id="' + _ovNodeSlot(n.node, 'row') + '">'
       + '<div class="ovm-node-info">'
         + '<div class="sub-hdr ovm-node-top">' + svg('server', 12) + '<span class="sub-hdr-title ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
         + '<div class="ovm-node-meta" id="' + _ovNodeSlot(n.node, 'meta') + '">' + gc + ' guests · ' + (n.uptime ? 'up ' + fmtUptime(n.uptime) : 'uptime unavailable') + '</div>'
@@ -432,7 +432,7 @@ function renderOverview(data) {
   var attCard = '<section>' + _ovSectionHeader('activity', 'Needs attention', D.att.length ? D.att.length + ' open' : 'No open issues')
     + '<div class="hd-card ovm-card">' + _ovAttention(D) + '</div></section>';
   var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'CPU and memory · last 2 minutes')
-    + '<div class="hd-card ovm-node-card"><div class="ovm-noderail" id="ov-node-pulse"></div></div></section>';
+    + '<div class="ovm-noderail" id="ov-node-pulse"></div></section>';
 
   // Cluster load chart (live history) — this block is preserved across ticks.
   var loadCard = '<section>' + _ovSectionHeader('activity', 'Cluster load', 'Utilization · % of capacity', '<span onclick="event.stopPropagation()">' + _histPillRow('ov-infra', ['1d', '7d', '30d', 'All', 'Custom'], { stopPropagation: true }) + '</span>')
