@@ -41,6 +41,13 @@ window.addEventListener('unhandledrejection',function(ev){
 });
 // Apply dark mode before render to avoid FOUC. Default: dark. Only light if explicitly opted out.
 (function(){try{if(localStorage.getItem('hd-dark')!=='0')document.documentElement.classList.add('dark');}catch(e){document.documentElement.classList.add('dark');}})();
+// Temporary iOS rubber-band comparison modes. Query-only so the normal app is
+// unchanged while an operator tests real Safari compositing behavior:
+//   ?iosbar=solid | ?iosbar=tint | ?iosbar=fixed
+(function(){try{
+  var v=new URLSearchParams(location.search).get('iosbar');
+  if(v==='solid'||v==='tint'||v==='fixed') document.documentElement.classList.add('iosbar-'+v);
+}catch(e){}})();
 // Custom accent from a hex color (the Settings → Appearance color input).
 // Overrides the :root/html.dark --c-accent tokens via an injected <style> so
 // opacity formulas (rgba(var(--c-accent-rgb),…)) stay in tune. Persisted under
@@ -1892,6 +1899,18 @@ html.dark .mobile-hdr::before { background:rgba(0,0,0,.4); }
   #main-wrap { margin-left: 0 !important; display: block !important; }
   #pages-root { overflow: visible !important; height: auto !important; overscroll-behavior-y: auto !important; }
   .mobile-hdr { display: flex; padding-top: max(10px, env(safe-area-inset-top)); position: sticky; top: 0; z-index: 30; }
+  /* Temporary real-device comparison modes selected by ?iosbar=. These are
+     deliberately isolated from the default URL and will be removed once the
+     stable iOS treatment is chosen. */
+  html.iosbar-solid .mobile-hdr::before {
+    background:var(--c-bg); -webkit-backdrop-filter:none; backdrop-filter:none;
+  }
+  html.iosbar-tint .mobile-hdr::before {
+    background:rgba(255,255,255,.88); -webkit-backdrop-filter:none; backdrop-filter:none;
+  }
+  html.dark.iosbar-tint .mobile-hdr::before { background:rgba(0,0,0,.88); }
+  html.iosbar-fixed .mobile-hdr { position:fixed; }
+  html.iosbar-fixed #pages-root { padding-top:var(--mob-hdr-h,52px); }
   #sidebar-expand-btn { display: none !important; }
   #sidebar { width: min(280px, 85vw) !important; padding-left: env(safe-area-inset-left); }
   /* Content flows right after the sticky bar — minimal top gap so text starts
