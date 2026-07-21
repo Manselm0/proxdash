@@ -5435,18 +5435,12 @@ function _ovNodeChip(n) {
 function _ovNodeRail(D) {
   if (!D.nodes.length) return '<div class="ovm-node-empty">' + svg('server', 16) + ' No node data is available.</div>';
   return D.nodes.map(function (n) {
-    var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
     var av = _ovNodeAverages(n);
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
-    var online = n.status === 'online';
     return '<article class="ovm-node" id="' + _ovNodeSlot(n.node, 'row') + '">'
       + '<div class="ovm-node-info">'
         + '<div class="sub-hdr ovm-node-top">' + svg('server', 12) + '<span class="sub-hdr-title ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
         + '<div class="ovm-node-meta" id="' + _ovNodeSlot(n.node, 'meta') + '">' + gc + ' guests · ' + (n.uptime ? 'up ' + fmtUptime(n.uptime) : 'uptime unavailable') + '</div>'
-        + '<div class="ovm-node-readings">'
-          + '<div class="stat-mini"><span class="stat-mini-lbl">CPU</span><span class="stat-mini-val cpu' + (online && cp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'cpu') + '">' + (online ? cp + '%' : '—') + '</span></div>'
-          + '<div class="stat-mini"><span class="stat-mini-lbl">Memory</span><span class="stat-mini-val ram' + (online && mp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'ram') + '">' + (online ? mp + '%' : '—') + '</span></div>'
-        + '</div>'
       + '</div>'
       + '<div class="ovm-node-window">'
         + '<div class="sub-hdr ovm-node-chart-hdr">' + svg('activity', 12) + '<span class="sub-hdr-title">CPU &amp; memory</span>'
@@ -5475,16 +5469,11 @@ function _ovUpdateNodeRail(D) {
     });
   } else {
     D.nodes.forEach(function (n) {
-      var online = n.status === 'online';
-      var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
       var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
       var state = _ovNodeState(n), status = el(_ovNodeSlot(n.node, 'status'));
       if (status) { status.className = 'badge badge-' + state.variant; status.textContent = state.label; }
       var meta = el(_ovNodeSlot(n.node, 'meta'));
       if (meta) meta.textContent = gc + ' guests · ' + (n.uptime ? 'up ' + fmtUptime(n.uptime) : 'uptime unavailable');
-      var cpu = el(_ovNodeSlot(n.node, 'cpu')), ram = el(_ovNodeSlot(n.node, 'ram'));
-      if (cpu) { cpu.textContent = online ? cp + '%' : '—'; cpu.classList.toggle('hot', online && cp > 85); }
-      if (ram) { ram.textContent = online ? mp + '%' : '—'; ram.classList.toggle('hot', online && mp > 85); }
       var av = _ovNodeAverages(n), avgCpu = el(_ovNodeSlot(n.node, 'avgcpu')), avgRam = el(_ovNodeSlot(n.node, 'avgram'));
       if (avgCpu) { avgCpu.textContent = av.cpu == null ? '—' : av.cpu + '%'; avgCpu.classList.toggle('hot', av.cpu != null && av.cpu > 85); }
       if (avgRam) { avgRam.textContent = av.mem == null ? '—' : av.mem + '%'; avgRam.classList.toggle('hot', av.mem != null && av.mem > 85); }
@@ -8630,4 +8619,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='963ba94200dd';
+;window.__BUILD__='029470ddcba6';
