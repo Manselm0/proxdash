@@ -1390,27 +1390,27 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-att-empty svg { color: #22C55E; flex-shrink: 0; }
 /* compact node activity windows — rolling 30-second CPU/RAM traces */
 .ovm-noderail { display: flex; flex-direction: column; gap: 7px; }
-.ovm-node { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 11px 12px; border-radius: 9px; background: var(--c-bg); border: 1px solid var(--c-border); }
+.ovm-node { display:grid; grid-template-columns:minmax(112px,.8fr) minmax(190px,1.55fr); gap:12px; align-items:stretch;
+  padding:10px; border-radius:9px; background:var(--c-bg); border:1px solid var(--c-border); }
+.ovm-node-info { min-width:0; display:flex; flex-direction:column; }
 .ovm-node-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ovm-node-top svg { color: var(--c-muted); flex-shrink: 0; }
 .ovm-node-nm { font-size: 12.5px; font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ovm-node-chip { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 2px 6px; border-radius: 5px; white-space: nowrap; }
-.ovm-node-meta { font-size: 10.5px; color: var(--c-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; align-self: center; }
-.ovm-node-window { position:relative; height:76px; margin-top:7px; grid-column:1/-1; overflow:hidden; border-radius:6px;
-  border:1px solid var(--c-border); background-color:var(--c-card);
-  background-image:linear-gradient(to right, var(--c-border) 1px, transparent 1px),linear-gradient(to top, var(--c-border) 1px, transparent 1px);
-  background-size:10% 100%,100% 50%; }
-.ovm-node-window svg { position:absolute; inset:4px 6px 18px; width:calc(100% - 12px); height:52px; overflow:visible; }
-.ovm-trace { fill:none; stroke-width:1.8; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
-.ovm-trace-cpu { stroke:var(--c-accent); }
-.ovm-trace-ram { stroke:#22C55E; opacity:.9; }
-.ovm-node-values { position:absolute; top:5px; left:8px; display:flex; gap:10px; padding:2px 5px; border-radius:4px;
-  background:color-mix(in srgb, var(--c-card) 82%, transparent); font-size:9px; color:var(--c-muted); text-transform:uppercase; letter-spacing:.03em; }
-.ovm-node-values b { margin-left:2px; font-size:10px; color:var(--c-text); font-variant-numeric:tabular-nums; }
-.ovm-node-values .cpu { color:var(--c-accent); }
-.ovm-node-values .ram { color:#22C55E; }
-.ovm-node-window-foot { position:absolute; left:7px; right:7px; bottom:3px; display:flex; justify-content:space-between; gap:6px;
-  font-size:8.5px; color:var(--c-dim); font-variant-numeric:tabular-nums; }
+.ovm-node-meta { margin-top:4px; font-size:9.5px; color:var(--c-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ovm-node-readings { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:auto; padding-top:7px; }
+.ovm-node-readings span { display:inline-flex; align-items:center; gap:4px; font-size:9px; color:var(--c-muted); }
+.ovm-node-readings i { width:7px; height:2px; border-radius:2px; background:currentColor; }
+.ovm-node-readings b { font-size:10.5px; color:var(--c-text); font-variant-numeric:tabular-nums; }
+.ovm-node-readings .cpu { color:var(--c-accent); }
+.ovm-node-readings .ram { color:#22C55E; }
+.ovm-node-detail { margin-top:5px; font-size:9px; line-height:1.45; color:var(--c-dim); font-variant-numeric:tabular-nums; }
+.ovm-node-window { min-width:0; height:120px; overflow:hidden; border-radius:6px; border:1px solid var(--c-border); background:var(--c-card); }
+.ovm-node-window canvas { display:block; width:100% !important; height:100% !important; }
+@media (max-width:430px) {
+  .ovm-node { grid-template-columns:1fr; }
+  .ovm-node-window { height:116px; }
+}
 .ovm-node-foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--c-border); font-size: 11px; color: var(--c-muted); }
 .ovm-node-foot svg { vertical-align: -2px; color: var(--c-muted); }
 /* leaderboard */

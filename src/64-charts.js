@@ -307,7 +307,7 @@ function _xAxisConfig(hrs) {
 function _makeChart(id, datasets, yFmt, hrs, opts) {
   const canvas = el(id); if (!canvas) return;
   _chartDefaults();
-  const xCfg = _xAxisConfig(hrs);
+  const xCfg = { ..._xAxisConfig(hrs), ...((opts && opts.xTime) || {}) };
   const stacked = !!(opts && opts.stacked);
   // Decide whether to play the intro sweep. Replay it on a real navigation so
   // every visit to a page animates, but stay still for the periodic WS-tick
@@ -379,15 +379,19 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
         x: { type: 'time', time: xCfg, stacked,
              ...(opts && opts.xMin != null ? { min: opts.xMin } : {}),
              ...(opts && opts.xMax != null ? { max: opts.xMax } : {}),
-             ticks: { maxTicksLimit: 8, font: { size: 10 },
+             ...((opts && opts.xTickValues) ? { afterBuildTicks: (s) => { s.ticks = opts.xTickValues.map(value => ({ value })); } } : {}),
+             ...(opts && opts.xTitle ? { title: { display: true, text: opts.xTitle, font: { size: 10, weight: '600' } } } : {}),
+             ticks: { maxTicksLimit: (opts && opts.xMaxTicks) || 8, font: { size: 10 },
                // Keep time labels horizontal and let autoSkip thin them when the
                // chart is narrow (square window / sidebar open) — rotated or
                // touching x labels read as cramped. Dense when wide, sparse when not.
-               maxRotation: 0, autoSkip: true, autoSkipPadding: 40 } },
+               maxRotation: 0, autoSkip: true, autoSkipPadding: 40,
+               ...((opts && opts.xTick) ? { callback: opts.xTick } : {}) } },
         y: { beginAtZero: true, stacked,
              ...(opts && opts.yMin != null ? { min: opts.yMin } : {}),
              ...(opts && opts.yMax != null ? { max: opts.yMax } : {}),
-             ticks: { maxTicksLimit: 6, font: { size: 10 },
+             ...(opts && opts.yTitle ? { title: { display: true, text: opts.yTitle, font: { size: 10, weight: '600' } } } : {}),
+             ticks: { maxTicksLimit: (opts && opts.yMaxTicks) || 6, font: { size: 10 },
              callback: v => yFmt ? yFmt(v) : v },
              ...(opts && opts.yAxisWidth ? { afterFit: (s) => { s.width = opts.yAxisWidth; } } : {}) }
       }

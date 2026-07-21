@@ -192,13 +192,32 @@ function _ovPulseSample(D) {
   Object.keys(_ovPulseHistory).forEach(function (node) { if (!live[node]) delete _ovPulseHistory[node]; });
 }
 
-function _ovPulsePath(points, key, now) {
-  if (!points.length) return '';
-  return points.map(function (p, i) {
-    var x = Math.max(0, Math.min(120, 120 - ((now - p.t) / 30000 * 120)));
-    var y = 50 - Math.max(0, Math.min(100, p[key])) / 100 * 46;
-    return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1);
-  }).join(' ');
+function _ovNodeChartId(node) { return 'ov-node-chart-' + String(node).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+function _ovRenderNodeCharts(D) {
+  var now = Date.now(), acc = _ovAccent();
+  D.nodes.forEach(function (n) {
+    var pts = _ovPulseHistory[n.node] || [];
+    var bucket = function (key) {
+      return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
+    };
+    var datasets = [
+      _dsAvgOnly('CPU', bucket('cpu'), acc),
+      _dsAvgOnly('RAM', bucket('mem'), _OV_G)
+    ];
+    _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, 1 / 120, {
+      noLegend: true, yMin: 0, yMax: 100, yMaxTicks: 3,
+      xMin: now - 30000, xMax: now,
+      xTime: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } },
+      xMaxTicks: 3, xTickValues: [now - 30000, now - 15000, now],
+      xTick: function (v) {
+        var ago = Math.max(0, Math.round((Date.now() - v) / 1000));
+        return ago < 2 ? 'now' : '−' + ago + 's';
+      },
+      xTitle: 'Time', yTitle: 'Usage %'
+    });
+    _wireChartHover(_ovNodeChartId(n.node));
+  });
 }
 
 function _ovPulseTick() {
@@ -206,7 +225,10 @@ function _ovPulseTick() {
   var D = _ovDerive(_ovLastData);
   _ovPulseSample(D);
   var rail = el('ov-node-pulse');
-  if (rail) rail.innerHTML = _ovNodeRail(D);
+  if (rail) {
+    rail.innerHTML = _ovNodeRail(D);
+    _ovRenderNodeCharts(D);
+  }
 }
 setInterval(_ovPulseTick, 3000);
 
@@ -222,19 +244,19 @@ function _ovNodeRail(D) {
   return '<div class="ovm-noderail">' + D.nodes.map(function (n) {
     var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
-    var pts = _ovPulseHistory[n.node] || [];
     return '<div class="ovm-node">'
-      + '<div class="ovm-node-top">' + svg('server', 13) + '<span class="ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
-      + '<div class="ovm-node-meta">' + gc + ' guests · ' + fmtUptime(n.uptime) + '</div>'
+      + '<div class="ovm-node-info">'
+        + '<div class="ovm-node-top">' + svg('server', 13) + '<span class="ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
+        + '<div class="ovm-node-meta">' + gc + ' guests · ' + fmtUptime(n.uptime) + '</div>'
+        + '<div class="ovm-node-readings">'
+          + '<span class="cpu"><i></i>CPU <b' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</b></span>'
+          + '<span class="ram"><i></i>RAM <b' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</b></span>'
+        + '</div>'
+        + '<div class="ovm-node-detail">load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
+          + '<br>wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</div>'
+      + '</div>'
       + '<div class="ovm-node-window">'
-        + '<svg viewBox="0 0 120 52" preserveAspectRatio="none" role="img" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds">'
-          + '<path class="ovm-trace ovm-trace-ram" d="' + _ovPulsePath(pts, 'mem', now) + '"></path>'
-          + '<path class="ovm-trace ovm-trace-cpu" d="' + _ovPulsePath(pts, 'cpu', now) + '"></path>'
-        + '</svg>'
-        + '<div class="ovm-node-values"><span class="cpu">CPU <b' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</b></span>'
-          + '<span class="ram">RAM <b' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</b></span></div>'
-        + '<div class="ovm-node-window-foot"><span>30s ago</span><span>load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
-          + ' · wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '%</span><span>now</span></div>'
+        + '<canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds"></canvas>'
       + '</div>'
       + '</div>';
   }).join('') + '</div>';
@@ -342,6 +364,7 @@ function renderOverview(data) {
     + '<section class="ovm-cols c-2-1">' + loadCard + consumeCard + '</section>'
     + '<section>' + taskCard + '</section>';
   _histSchedule();
+  setTimeout(function () { _ovRenderNodeCharts(D); }, 0);
 
   // Reattach the preserved chart block over its fresh placeholder.
   if (savedCluster) {
