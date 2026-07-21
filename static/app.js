@@ -5136,6 +5136,8 @@ var _ovLeadMode = 'cpu';          // Top-consumers toggle, persisted across tick
 var _ovLastData = null;           // last snapshot, so the toggle can re-render
 var _ovPulseHistory = {};         // rolling 30-second node samples (3-second cadence)
 var _ovPulseLastSample = 0;
+var _ovPulsePreloadAt = 0;
+var _ovPulsePreloadBusy = false;
 
 function _ovAccent() {
   return (getComputedStyle(document.documentElement).getPropertyValue('--c-accent') || '#E57000').trim();
@@ -5305,6 +5307,34 @@ function _ovPulseSample(D) {
     _ovPulseHistory[n.node] = h.filter(function (p) { return p.t >= now - 30000; });
   });
   Object.keys(_ovPulseHistory).forEach(function (node) { if (!live[node]) delete _ovPulseHistory[node]; });
+}
+
+async function _ovPreloadPulse(force) {
+  var now = Date.now();
+  if (_ovPulsePreloadBusy || (!force && now - _ovPulsePreloadAt < 9000)) return;
+  _ovPulsePreloadBusy = true;
+  try {
+    var data = await _swrJSON('/api/history/proxmox_recent?seconds=30', function () { _ovPreloadPulse(true); });
+    var cutoff = Date.now() - 30000;
+    Object.keys((data && data.nodes) || {}).forEach(function (node) {
+      var nd = data.nodes[node] || {}, incoming = [];
+      (nd.labels || []).forEach(function (ts, i) {
+        var t = Number(ts) * 1000, cpu = Number(nd.cpu && nd.cpu[i]), mem = Number(nd.mem && nd.mem[i]);
+        if (t >= cutoff && isFinite(cpu) && isFinite(mem)) incoming.push({ t: t, cpu: cpu, mem: mem });
+      });
+      var local = (_ovPulseHistory[node] || []).filter(function (p) { return p.t >= cutoff; });
+      var merged = incoming.concat(local).sort(function (a, b) { return a.t - b.t; });
+      _ovPulseHistory[node] = merged.filter(function (p, i) {
+        return !i || Math.abs(p.t - merged[i - 1].t) >= 250;
+      });
+    });
+    _ovPulsePreloadAt = Date.now();
+    if (currentPage === 'overview' && _ovLastData) {
+      var D = _ovDerive(_ovLastData), rail = el('ov-node-pulse');
+      if (rail) { rail.innerHTML = _ovNodeRail(D); _ovRenderNodeCharts(D); }
+    }
+  } catch (e) { console.warn('ov recent history:', e); }
+  finally { _ovPulsePreloadBusy = false; }
 }
 
 function _ovNodeChartId(node) { return 'ov-node-chart-' + String(node).replace(/[^a-zA-Z0-9_-]/g, '_'); }
@@ -5479,6 +5509,7 @@ function renderOverview(data) {
     + '<section>' + taskCard + '</section>';
   _histSchedule();
   setTimeout(function () { _ovRenderNodeCharts(D); }, 0);
+  _ovPreloadPulse();
 
   // Reattach the preserved chart block over its fresh placeholder.
   if (savedCluster) {
@@ -8500,4 +8531,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='f47f1b627cc3';
+;window.__BUILD__='f4b3b46647ab';

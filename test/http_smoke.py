@@ -116,6 +116,9 @@ def run() -> None:
                 _, status_body = request(authed, base + "/api/status")
                 status = json.loads(status_body)
                 assert "proxmox" in status and status.get("config_meta")
+                _, recent_body = request(authed, base + "/api/history/proxmox_recent?seconds=30")
+                recent = json.loads(recent_body)
+                assert isinstance(recent.get("nodes"), dict)
 
                 request(authed, base + "/api/tools/wol?mac=001122334455", expected=405)
                 request(

@@ -3541,6 +3541,32 @@ async def history_proxmox(hours: int = 24):
         nodes[n]["iowait"].append(r["iowait_pct"])
     return {"nodes": nodes}
 
+@app.get("/api/history/proxmox_recent")
+async def history_proxmox_recent(seconds: int = 30):
+    """Raw recent node samples for the Overview's live 30-second mini charts.
+
+    This deliberately bypasses the minute-or-larger buckets used by the long-
+    range history endpoint so a freshly loaded page can resume the persisted
+    trace instead of waiting 30 seconds for browser-local samples to accumulate.
+    """
+    seconds = max(10, min(seconds, 300))
+    cutoff = time.time() - seconds
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT ts, node, cpu_pct, mem_pct FROM proxmox_stats "
+            "WHERE ts > ? ORDER BY ts ASC",
+            (cutoff,)
+        ).fetchall()
+    nodes: dict = {}
+    for r in rows:
+        n = r["node"]
+        if n not in nodes:
+            nodes[n] = {"labels": [], "cpu": [], "mem": []}
+        nodes[n]["labels"].append(r["ts"])
+        nodes[n]["cpu"].append(r["cpu_pct"])
+        nodes[n]["mem"].append(r["mem_pct"])
+    return {"nodes": nodes}
+
 @app.get("/api/history/proxmox_net")
 async def history_proxmox_net(hours: int = 24):
     """Per-node network throughput history (bytes/sec in/out) for the Network page."""

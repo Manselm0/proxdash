@@ -66,6 +66,7 @@ def check_routes(app_module) -> None:
     ):
         assert path not in methods, f"removed benchmark route is still registered: {path}"
     assert methods.get("/auth/logout") == {"GET", "POST"}
+    assert methods.get("/api/history/proxmox_recent") == {"GET"}
 
 
 def check_legacy_schema_upgrade(app_module) -> None:
