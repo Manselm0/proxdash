@@ -1373,7 +1373,9 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-cols.c-2-1 { grid-template-columns: 1.7fr 1fr; }
 @media (max-width: 900px){ .ovm-cols.c-2-1 { grid-template-columns: 1fr; } }
 .ovm-card { padding: 16px; }
-.ovm-live { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--c-muted); }
+.ovm-node-avg { display:inline-flex; align-items:baseline; gap:4px; font-size:11px; color:var(--c-muted); font-variant-numeric:tabular-nums; }
+.ovm-node-avg + .ovm-node-avg { margin-left:10px; }
+.ovm-node-avg b { color:var(--c-text); font-weight:600; }
 /* needs-attention feed — hairline rows with word severity (no redundant dot) */
 .ovm-att { display: flex; flex-direction: column; }
 .ovm-att-row { display: grid; grid-template-columns: 62px 1fr auto; gap: 13px; align-items: center;
@@ -1410,7 +1412,7 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
 .ovm-node-readings .ram { color:#22C55E; }
 .ovm-node-readings .hot { color:#EF4444; }
 .ovm-node-detail { margin-top:auto; padding-top:7px; font-size:11px; line-height:1.4; color:var(--c-dim); font-variant-numeric:tabular-nums; }
-.ovm-node-window { min-width:0; padding:10px 12px 8px; overflow:hidden; border-radius:7px; border:1px solid var(--c-border); background:var(--c-bg); }
+.ovm-node-window { min-width:0; padding:10px 12px 8px; overflow:hidden; border-radius:7px; border:1px solid var(--c-border); background:var(--c-card); }
 .ovm-node-chart-hdr { margin-bottom:4px; }
 .ovm-node-chart { position:relative; height:92px; }
 .ovm-node-chart canvas { display:block; width:100% !important; height:100% !important; }
@@ -1878,9 +1880,10 @@ html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
   /* Mobile = native document scroll (so the page rubber-band-bounces and the
      Safari URL bar collapses), with the header as a position:sticky element so
      it bounces WITH the page instead of floating fixed above it. */
+  html, body { overscroll-behavior-y: auto; }
   body { display: block !important; height: auto !important; min-height: 100dvh; overflow-x: hidden; overflow-y: visible !important; }
   #main-wrap { margin-left: 0 !important; display: block !important; }
-  #pages-root { overflow: visible !important; height: auto !important; }
+  #pages-root { overflow: visible !important; height: auto !important; overscroll-behavior-y: auto !important; }
   .mobile-hdr { display: flex; padding-top: max(10px, env(safe-area-inset-top)); position: sticky; top: 0; z-index: 30; }
   #sidebar-expand-btn { display: none !important; }
   #sidebar { width: min(280px, 85vw) !important; padding-left: env(safe-area-inset-left); }

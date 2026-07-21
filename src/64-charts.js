@@ -437,7 +437,11 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
     }
   }
   _chartHideSkeleton(id);
-  _maybeReveal(_charts[id], id, _isRefresh);  // sweep on first paint / re-visit; resume if a tick interrupted it
+  // Dense rolling mini-charts can opt out: a clipped first frame reads as an
+  // unfinished/loading graph when the chart is rebuilt as samples arrive.
+  if (!(opts && opts.noReveal)) {
+    _maybeReveal(_charts[id], id, _isRefresh);  // sweep on first paint / re-visit; resume if a tick interrupted it
+  }
 }
 
 function _toPoints(labels, vals) {

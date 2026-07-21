@@ -3543,11 +3543,11 @@ async def history_proxmox(hours: int = 24):
 
 @app.get("/api/history/proxmox_recent")
 async def history_proxmox_recent(seconds: int = 30):
-    """Raw recent node samples for the Overview's live 30-second mini charts.
+    """Raw recent node samples for the Overview's rolling mini charts.
 
     This deliberately bypasses the minute-or-larger buckets used by the long-
     range history endpoint so a freshly loaded page can resume the persisted
-    trace instead of waiting 30 seconds for browser-local samples to accumulate.
+    trace instead of waiting for browser-local samples to accumulate.
     """
     seconds = max(10, min(seconds, 300))
     cutoff = time.time() - seconds

@@ -6,7 +6,7 @@
 //   • Needs attention — a synthesized, severity-ranked feed built across every
 //     subsystem (nodes, quorum, Ceph, backups, storage, updates, certs, health,
 //     firewall, 2FA, stopped guests) — each row navigates to its owning page
-//   • Node activity — compact per-node 30-second CPU/RAM traces + Ceph status
+//   • Node activity — compact per-node two-minute CPU/RAM traces + Ceph status
 //   • Cluster load — the live utilization history chart (loadOvResources)
 //   • Top consumers — the hottest guests, CPU⇄RAM toggle
 //   • Recent activity — the cluster task log
@@ -19,7 +19,8 @@
 
 var _ovLeadMode = 'cpu';          // Top-consumers toggle, persisted across ticks
 var _ovLastData = null;           // last snapshot, so the toggle can re-render
-var _ovPulseHistory = {};         // rolling 30-second node samples (3-second cadence)
+var _OV_PULSE_WINDOW_MS = 120000;
+var _ovPulseHistory = {};         // rolling two-minute node samples (3-second cadence)
 var _ovPulseLastSample = 0;
 var _ovPulsePreloadAt = 0;
 var _ovPulsePreloadBusy = false;
@@ -191,7 +192,7 @@ function _ovPulseSample(D) {
     if (n.status === 'online' && n.cpu != null && n.maxmem) {
       h.push({ t: now, cpu: Math.round(n.cpu * 100), mem: Math.round((n.mem || 0) / n.maxmem * 100) });
     }
-    _ovPulseHistory[n.node] = h.filter(function (p) { return p.t >= now - 30000; });
+    _ovPulseHistory[n.node] = h.filter(function (p) { return p.t >= now - _OV_PULSE_WINDOW_MS; });
   });
   Object.keys(_ovPulseHistory).forEach(function (node) { if (!live[node]) delete _ovPulseHistory[node]; });
 }
@@ -201,8 +202,8 @@ async function _ovPreloadPulse(force) {
   if (_ovPulsePreloadBusy || (!force && now - _ovPulsePreloadAt < 9000)) return;
   _ovPulsePreloadBusy = true;
   try {
-    var data = await _swrJSON('/api/history/proxmox_recent?seconds=30', function () { _ovPreloadPulse(true); });
-    var cutoff = Date.now() - 30000;
+    var data = await _swrJSON('/api/history/proxmox_recent?seconds=120', function () { _ovPreloadPulse(true); });
+    var cutoff = Date.now() - _OV_PULSE_WINDOW_MS;
     Object.keys((data && data.nodes) || {}).forEach(function (node) {
       var nd = data.nodes[node] || {}, incoming = [];
       (nd.labels || []).forEach(function (ts, i) {
@@ -228,6 +229,33 @@ function _ovNodeChartId(node) { return 'ov-node-chart-' + _ovNodeKey(node); }
 function _ovNodeLegendId(node) { return 'ov-node-legend-' + _ovNodeKey(node); }
 function _ovNodeSlot(node, slot) { return 'ov-node-' + slot + '-' + _ovNodeKey(node); }
 
+// Capacity-weighted averages across the visible two-minute window. Weighting
+// CPU by cores and RAM by installed bytes makes differently sized nodes
+// contribute in proportion to the capacity they actually represent.
+function _ovPulseAverages(D) {
+  var cutoff = Date.now() - _OV_PULSE_WINDOW_MS;
+  var cpuSum = 0, cpuWeight = 0, memSum = 0, memWeight = 0;
+  D.nodes.forEach(function (n) {
+    if (n.status !== 'online') return;
+    var cw = n.maxcpu || 0, mw = n.maxmem || 0;
+    (_ovPulseHistory[n.node] || []).forEach(function (p) {
+      if (p.t < cutoff) return;
+      if (cw && isFinite(p.cpu)) { cpuSum += p.cpu * cw; cpuWeight += cw; }
+      if (mw && isFinite(p.mem)) { memSum += p.mem * mw; memWeight += mw; }
+    });
+  });
+  return {
+    cpu: Math.round(cpuWeight ? cpuSum / cpuWeight : D.cpuPct),
+    mem: Math.round(memWeight ? memSum / memWeight : D.memPct)
+  };
+}
+
+function _ovPulseAverageHtml(D) {
+  var a = _ovPulseAverages(D);
+  return '<span class="ovm-node-avg"><span>Avg CPU</span> <b id="ov-node-avg-cpu">' + a.cpu + '%</b></span>'
+    + '<span class="ovm-node-avg"><span>Avg RAM</span> <b id="ov-node-avg-ram">' + a.mem + '%</b></span>';
+}
+
 function _ovRenderNodeCharts(D) {
   var now = Date.now(), acc = _ovAccent();
   D.nodes.forEach(function (n) {
@@ -246,19 +274,24 @@ function _ovRenderNodeCharts(D) {
     var bucket = function (key) {
       return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
     };
+    // Lines stay transparent underneath so the canvas uses the exact same
+    // surface color as its widget; the rolling chart also skips the one-shot
+    // reveal because its clipped left edge can look like an unfinished load.
     var datasets = [
-      _dsAvgOnly('CPU', bucket('cpu'), acc, { gradient: 'soft' }),
-      _dsAvgOnly('RAM', bucket('mem'), _OV_G, { gradient: 'soft' })
+      _dsAvgOnly('CPU', bucket('cpu'), acc),
+      _dsAvgOnly('RAM', bucket('mem'), _OV_G)
     ];
-    _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, 1 / 120, {
+    _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, _OV_PULSE_WINDOW_MS / 3600000, {
       legendTarget: _ovNodeLegendId(n.node), yMin: 0, yMax: 100, yMaxTicks: 3,
-      xMin: now - 30000, xMax: now,
+      xMin: now - _OV_PULSE_WINDOW_MS, xMax: now,
       xTime: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } },
-      xMaxTicks: 3, xTickValues: [now - 30000, now - 15000, now],
+      xMaxTicks: 3, xTickValues: [now - _OV_PULSE_WINDOW_MS, now - _OV_PULSE_WINDOW_MS / 2, now],
       xTick: function (v) {
         var ago = Math.max(0, Math.round((Date.now() - v) / 1000));
-        return ago < 2 ? 'now' : ago + 's';
-      }
+        if (ago < 2) return 'now';
+        return ago >= 60 ? Math.round(ago / 60) + 'm' : ago + 's';
+      },
+      noReveal: true
     });
     _wireChartHover(_ovNodeChartId(n.node));
   });
@@ -303,7 +336,7 @@ function _ovNodeRail(D) {
       + '<div class="ovm-node-window">'
         + '<div class="sub-hdr ovm-node-chart-hdr">' + svg('activity', 12) + '<span class="sub-hdr-title">CPU &amp; memory</span>'
           + '<div class="sub-hdr-actions" id="' + _ovNodeLegendId(n.node) + '"></div></div>'
-        + '<div class="ovm-node-chart"><canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds"></canvas>'
+        + '<div class="ovm-node-chart"><canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last two minutes"></canvas>'
           + '<div class="ovm-node-chart-empty" id="' + _ovNodeSlot(n.node, 'empty') + '"></div></div>'
       + '</div>'
       + '</article>';
@@ -312,6 +345,9 @@ function _ovNodeRail(D) {
 
 function _ovUpdateNodeRail(D) {
   var host = el('ov-node-pulse'); if (!host) return;
+  var avgs = _ovPulseAverages(D), avgCpu = el('ov-node-avg-cpu'), avgRam = el('ov-node-avg-ram');
+  if (avgCpu) avgCpu.textContent = avgs.cpu + '%';
+  if (avgRam) avgRam.textContent = avgs.mem + '%';
   var sig = D.nodes.map(function (n) { return n.node; }).join('\u001f');
   if (host.dataset.sig !== sig) {
     host.innerHTML = _ovNodeRail(D);
@@ -405,7 +441,7 @@ function renderOverview(data) {
   // Attention card (flagship) + full-width rolling node activity section.
   var attCard = '<section>' + _ovSectionHeader('activity', 'Needs attention', D.att.length ? D.att.length + ' open' : 'No open issues')
     + '<div class="hd-card ovm-card">' + _ovAttention(D) + '</div></section>';
-  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'Live CPU and memory · last 30 seconds', '<span class="ovm-live"><span class="sdot sdot-green dot-live"></span>live</span>')
+  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'CPU and memory · last 2 minutes', _ovPulseAverageHtml(D))
     + '<div class="hd-card ovm-node-card"><div class="ovm-noderail" id="ov-node-pulse"></div></div></section>';
 
   // Cluster load chart (live history) — this block is preserved across ticks.
