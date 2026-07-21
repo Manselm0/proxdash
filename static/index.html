@@ -1841,15 +1841,12 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
      glyphs sit ~16px in, lining up with where the widgets' content begins (cards
      use p-4 = 16px), not the invisible card edge. */
   padding: 10px 10px;
-  /* Frosted bar — translucent ink tint + blur. KNOWN TRADE-OFF: backdrop-filter
-     flickers the bar's text/icons during the iOS overscroll rubber-band (WebKit
-     re-rasterizes the blur layer mid-bounce and drops the foreground until the
-     scroll settles). Kept by explicit user preference: they want the frosted
-     look and accept the bounce flicker. The alternative (no flicker) is to drop
-     either the blur or the page bounce. */
-  background: rgba(255,255,255,.4);
-  -webkit-backdrop-filter: blur(25px);
-  backdrop-filter: blur(25px);
+  /* Keep the sticky bar's foreground OUT of the WebKit backdrop-filter layer.
+     iOS re-rasterizes a filtered sticky element during rubber-band overscroll;
+     when the filter lives on the header itself its text/icons briefly vanish.
+     The ::before layer below owns the frost while children stay composited. */
+  background: transparent;
+  isolation: isolate;
   border-bottom: 1px solid transparent;
   flex-shrink: 0;
   /* Absolute overlay (desktop): full-bleed across #main-wrap (left:0/right:0) so the
@@ -1857,7 +1854,17 @@ html:not(.dark) .bk-hm-row:not(.bk-hm-head):nth-child(even) { background: rgba(0
      re-asserts position:sticky below for native document scroll. */
   position: absolute; top: 0; left: 0; right: 0; z-index: 30;
 }
-html.dark .mobile-hdr { background: rgba(0,0,0,.4); }
+.mobile-hdr::before {
+  content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background:rgba(255,255,255,.4); border-bottom:1px solid transparent;
+  -webkit-backdrop-filter:blur(25px); backdrop-filter:blur(25px);
+  transform:translateZ(0); -webkit-transform:translateZ(0);
+}
+.mobile-hdr > * {
+  position:relative; z-index:1; transform:translateZ(0); -webkit-transform:translateZ(0);
+  backface-visibility:hidden; -webkit-backface-visibility:hidden;
+}
+html.dark .mobile-hdr::before { background:rgba(0,0,0,.4); }
 @media (min-width: 768px) {
   /* Push the scrolling content below the overlaid bar (bar height; the 4px gap to
      the description is owned by #pages-content's padding-top). Content scrolls
