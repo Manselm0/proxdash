@@ -5303,7 +5303,9 @@ function _ovPulseSample(D) {
   D.nodes.forEach(function (n) {
     live[n.node] = true;
     var h = _ovPulseHistory[n.node] || [];
-    h.push({ t: now, cpu: Math.round((n.cpu || 0) * 100), mem: n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0 });
+    if (n.status === 'online' && n.cpu != null && n.maxmem) {
+      h.push({ t: now, cpu: Math.round(n.cpu * 100), mem: Math.round((n.mem || 0) / n.maxmem * 100) });
+    }
     _ovPulseHistory[n.node] = h.filter(function (p) { return p.t >= now - 30000; });
   });
   Object.keys(_ovPulseHistory).forEach(function (node) { if (!live[node]) delete _ovPulseHistory[node]; });
@@ -5330,19 +5332,32 @@ async function _ovPreloadPulse(force) {
     });
     _ovPulsePreloadAt = Date.now();
     if (currentPage === 'overview' && _ovLastData) {
-      var D = _ovDerive(_ovLastData), rail = el('ov-node-pulse');
-      if (rail) { rail.innerHTML = _ovNodeRail(D); _ovRenderNodeCharts(D); }
+      _ovUpdateNodeRail(_ovDerive(_ovLastData));
     }
   } catch (e) { console.warn('ov recent history:', e); }
   finally { _ovPulsePreloadBusy = false; }
 }
 
-function _ovNodeChartId(node) { return 'ov-node-chart-' + String(node).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function _ovNodeKey(node) { return String(node).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function _ovNodeChartId(node) { return 'ov-node-chart-' + _ovNodeKey(node); }
+function _ovNodeLegendId(node) { return 'ov-node-legend-' + _ovNodeKey(node); }
+function _ovNodeSlot(node, slot) { return 'ov-node-' + slot + '-' + _ovNodeKey(node); }
 
 function _ovRenderNodeCharts(D) {
   var now = Date.now(), acc = _ovAccent();
   D.nodes.forEach(function (n) {
     var pts = _ovPulseHistory[n.node] || [];
+    var canvas = el(_ovNodeChartId(n.node)), empty = el(_ovNodeSlot(n.node, 'empty'));
+    if (!pts.length) {
+      var old = _charts[_ovNodeChartId(n.node)];
+      if (old) { try { old.destroy(); } catch (e) {} delete _charts[_ovNodeChartId(n.node)]; }
+      if (canvas) canvas.style.display = 'none';
+      if (empty) { empty.style.display = 'flex'; empty.textContent = n.status === 'online' ? 'Waiting for live samples…' : 'Node is offline'; }
+      var noLeg = el(_ovNodeLegendId(n.node)); if (noLeg) noLeg.innerHTML = '';
+      return;
+    }
+    if (canvas) canvas.style.display = '';
+    if (empty) empty.style.display = 'none';
     var bucket = function (key) {
       return { labels: pts.map(function (p) { return p.t / 1000; }), avg: pts.map(function (p) { return p[key]; }) };
     };
@@ -5351,7 +5366,7 @@ function _ovRenderNodeCharts(D) {
       _dsAvgOnly('RAM', bucket('mem'), _OV_G, { gradient: 'soft' })
     ];
     _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, 1 / 120, {
-      noLegend: true, yMin: 0, yMax: 100, yMaxTicks: 3,
+      legendTarget: _ovNodeLegendId(n.node), yMin: 0, yMax: 100, yMaxTicks: 3,
       xMin: now - 30000, xMax: now,
       xTime: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } },
       xMaxTicks: 3, xTickValues: [now - 30000, now - 15000, now],
@@ -5368,42 +5383,77 @@ function _ovPulseTick() {
   if (!_ovLastData || currentPage !== 'overview') return;
   var D = _ovDerive(_ovLastData);
   _ovPulseSample(D);
-  var rail = el('ov-node-pulse');
-  if (rail) {
-    rail.innerHTML = _ovNodeRail(D);
-    _ovRenderNodeCharts(D);
-  }
+  _ovUpdateNodeRail(D);
 }
 setInterval(_ovPulseTick, 3000);
 
+function _ovNodeState(n) {
+  if (n.status !== 'online') return { variant: 'down', label: 'Offline' };
+  if (n.reboot_required) return { variant: 'warn', label: 'Reboot required' };
+  if ((n.updates || 0) > 0) return { variant: 'info', label: n.updates + ' update' + (n.updates === 1 ? '' : 's') };
+  return { variant: 'up', label: 'Online' };
+}
 function _ovNodeChip(n) {
-  if (n.status !== 'online') return '<span class="ovm-node-chip" style="background:' + _OV_R + '22;color:' + _OV_R + '">offline</span>';
-  if (n.reboot_required) return '<span class="ovm-node-chip" style="background:' + _OV_A + '22;color:' + _OV_A + '">reboot</span>';
-  if ((n.updates || 0) > 0) return '<span class="ovm-node-chip" style="background:var(--c-hover);color:var(--c-muted)">' + n.updates + ' upd</span>';
-  return '<span class="ovm-node-chip" style="background:' + _OV_G + '1f;color:' + _OV_G + '">online</span>';
+  var s = _ovNodeState(n);
+  return '<span class="badge badge-' + s.variant + '" id="' + _ovNodeSlot(n.node, 'status') + '">' + s.label + '</span>';
 }
 
 function _ovNodeRail(D) {
-  var now = Date.now();
-  return '<div class="ovm-noderail">' + D.nodes.map(function (n) {
+  if (!D.nodes.length) return '<div class="ovm-node-empty">' + svg('server', 16) + ' No node data is available.</div>';
+  return D.nodes.map(function (n) {
     var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
     var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
-    return '<div class="ovm-node">'
+    var online = n.status === 'online';
+    return '<article class="ovm-node" id="' + _ovNodeSlot(n.node, 'row') + '">'
       + '<div class="ovm-node-info">'
-        + '<div class="ovm-node-top">' + svg('server', 13) + '<span class="ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
-        + '<div class="ovm-node-meta">' + gc + ' guests · ' + fmtUptime(n.uptime) + '</div>'
+        + '<div class="sub-hdr ovm-node-top">' + svg('server', 12) + '<span class="sub-hdr-title ovm-node-nm">' + esc(n.node) + '</span>' + _ovNodeChip(n) + '</div>'
+        + '<div class="ovm-node-meta" id="' + _ovNodeSlot(n.node, 'meta') + '">' + gc + ' guests · ' + (n.uptime ? 'up ' + fmtUptime(n.uptime) : 'uptime unavailable') + '</div>'
         + '<div class="ovm-node-readings">'
-          + '<span class="cpu"><i></i>CPU <b' + (cp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + cp + '%</b></span>'
-          + '<span class="ram"><i></i>RAM <b' + (mp > 85 ? ' style="color:' + _OV_R + '"' : '') + '>' + mp + '%</b></span>'
+          + '<div class="stat-mini"><span class="stat-mini-lbl">CPU</span><span class="stat-mini-val cpu' + (online && cp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'cpu') + '">' + (online ? cp + '%' : '—') + '</span></div>'
+          + '<div class="stat-mini"><span class="stat-mini-lbl">Memory</span><span class="stat-mini-val ram' + (online && mp > 85 ? ' hot' : '') + '" id="' + _ovNodeSlot(n.node, 'ram') + '">' + (online ? mp + '%' : '—') + '</span></div>'
         + '</div>'
-        + '<div class="ovm-node-detail">load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
-          + '<br>wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</div>'
+        + '<div class="ovm-node-detail" id="' + _ovNodeSlot(n.node, 'detail') + '">Load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
+          + ' · I/O wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores</div>'
       + '</div>'
       + '<div class="ovm-node-window">'
-        + '<canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds"></canvas>'
+        + '<div class="sub-hdr ovm-node-chart-hdr">' + svg('activity', 12) + '<span class="sub-hdr-title">CPU &amp; memory</span>'
+          + '<div class="sub-hdr-actions" id="' + _ovNodeLegendId(n.node) + '"></div></div>'
+        + '<div class="ovm-node-chart"><canvas id="' + _ovNodeChartId(n.node) + '" aria-label="' + esc(n.node) + ' CPU and RAM usage over the last 30 seconds"></canvas>'
+          + '<div class="ovm-node-chart-empty" id="' + _ovNodeSlot(n.node, 'empty') + '"></div></div>'
       + '</div>'
-      + '</div>';
-  }).join('') + '</div>';
+      + '</article>';
+  }).join('');
+}
+
+function _ovUpdateNodeRail(D) {
+  var host = el('ov-node-pulse'); if (!host) return;
+  var sig = D.nodes.map(function (n) { return n.node; }).join('\u001f');
+  if (host.dataset.sig !== sig) {
+    host.innerHTML = _ovNodeRail(D);
+    host.dataset.sig = sig;
+    var active = {};
+    D.nodes.forEach(function (n) { active[_ovNodeChartId(n.node)] = true; });
+    Object.keys(_charts).filter(function (id) { return id.indexOf('ov-node-chart-') === 0 && !active[id]; }).forEach(function (id) {
+      try { _charts[id].destroy(); } catch (e) {} delete _charts[id];
+    });
+  } else {
+    D.nodes.forEach(function (n) {
+      var online = n.status === 'online';
+      var cp = Math.round((n.cpu || 0) * 100), mp = n.maxmem ? Math.round((n.mem || 0) / n.maxmem * 100) : 0;
+      var gc = D.guests.filter(function (g) { return g.node === n.node; }).length;
+      var state = _ovNodeState(n), status = el(_ovNodeSlot(n.node, 'status'));
+      if (status) { status.className = 'badge badge-' + state.variant; status.textContent = state.label; }
+      var meta = el(_ovNodeSlot(n.node, 'meta'));
+      if (meta) meta.textContent = gc + ' guests · ' + (n.uptime ? 'up ' + fmtUptime(n.uptime) : 'uptime unavailable');
+      var cpu = el(_ovNodeSlot(n.node, 'cpu')), ram = el(_ovNodeSlot(n.node, 'ram'));
+      if (cpu) { cpu.textContent = online ? cp + '%' : '—'; cpu.classList.toggle('hot', online && cp > 85); }
+      if (ram) { ram.textContent = online ? mp + '%' : '—'; ram.classList.toggle('hot', online && mp > 85); }
+      var detail = el(_ovNodeSlot(n.node, 'detail'));
+      if (detail) detail.textContent = 'Load ' + (n.loadavg != null ? n.loadavg.toFixed(2) : '—')
+        + ' · I/O wait ' + (n.iowait != null ? n.iowait.toFixed(1) : '—') + '% · ' + (n.maxcpu || 0) + ' cores';
+    });
+  }
+  _ovRenderNodeCharts(D);
 }
 
 function _ovSectionHeader(icon, title, sub, actions) {
@@ -5467,16 +5517,11 @@ function renderOverview(data) {
 
   var acc = _ovAccent();
 
-  // Attention card (flagship) + compact rolling node activity windows.
+  // Attention card (flagship) + full-width rolling node activity section.
   var attCard = '<section>' + _ovSectionHeader('activity', 'Needs attention', D.att.length ? D.att.length + ' open' : 'No open issues')
     + '<div class="hd-card ovm-card">' + _ovAttention(D) + '</div></section>';
-  var cephLine = D.cephOn
-    ? '<div class="ovm-node-foot"><span>' + svg('database', 12) + ' Ceph ' + esc(String(D.ceph.health || '').replace('HEALTH_', ''))
-        + (D.ceph.num_up_osds != null ? ' · ' + D.ceph.num_up_osds + '/' + D.ceph.num_osds + ' OSDs' : '') + '</span>'
-        + '<span>' + D.cephPct + '% of ' + fmtBytes(D.ceph.usable_total_bytes) + '</span></div>'
-    : '';
-  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'Last 30 seconds · 3-second samples', '<span class="ovm-live"><span class="sdot sdot-green dot-live"></span>live</span>')
-    + '<div class="hd-card ovm-card"><div id="ov-node-pulse">' + _ovNodeRail(D) + '</div>' + cephLine + '</div></section>';
+  var pulseCard = '<section>' + _ovSectionHeader('server', 'Node activity', 'Live CPU and memory · last 30 seconds', '<span class="ovm-live"><span class="sdot sdot-green dot-live"></span>live</span>')
+    + '<div class="hd-card ovm-node-card"><div class="ovm-noderail" id="ov-node-pulse"></div></div></section>';
 
   // Cluster load chart (live history) — this block is preserved across ticks.
   var loadCard = '<section>' + _ovSectionHeader('activity', 'Cluster load', 'Utilization · % of capacity', '<span onclick="event.stopPropagation()">' + _histPillRow('ov-infra', ['1d', '7d', '30d', 'All', 'Custom'], { stopPropagation: true }) + '</span>')
@@ -5498,24 +5543,31 @@ function renderOverview(data) {
   var taskCard = '<section>' + _ovSectionHeader('list', 'Recent activity', 'Cluster task log')
     + '<div class="hd-card ovm-card">' + _ovTasks(D) + '</div></section>';
 
-  // Preserve the live chart block across the every-tick innerHTML rebuild.
+  // Preserve live chart blocks across the every-tick innerHTML rebuild. Their
+  // shells only rebuild when the node/chart structure actually changes.
   var savedCluster = el('ov-cluster-charts');
   if (savedCluster) savedCluster.remove();
+  var savedPulse = el('ov-node-pulse');
+  if (savedPulse) savedPulse.remove();
 
   ovEl.className = 'space-y-6';
   ovEl.innerHTML =
-    '<section class="ovm-cols c-2-1">' + attCard + pulseCard + '</section>'
-    + '<section class="ovm-cols c-2-1">' + loadCard + consumeCard + '</section>'
-    + '<section>' + taskCard + '</section>';
-  _histSchedule();
-  setTimeout(function () { _ovRenderNodeCharts(D); }, 0);
-  _ovPreloadPulse();
+    attCard + pulseCard
+    + '<div class="ovm-cols c-2-1">' + loadCard + consumeCard + '</div>'
+    + taskCard;
 
   // Reattach the preserved chart block over its fresh placeholder.
   if (savedCluster) {
     var ph = el('ov-cluster-charts');
     if (ph && ph !== savedCluster) ph.replaceWith(savedCluster);
   }
+  if (savedPulse) {
+    var pulsePh = el('ov-node-pulse');
+    if (pulsePh && pulsePh !== savedPulse) pulsePh.replaceWith(savedPulse);
+  }
+  _ovUpdateNodeRail(D);
+  _histSchedule();
+  _ovPreloadPulse();
 
   // Throttle the chart reload to once per 5 min (WS fires every ~10s); reload
   // immediately if the chart is missing or its canvas got orphaned.
@@ -6553,8 +6605,14 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
     const sx = _prev.options.scales.x, sy = _prev.options.scales.y;
     sx.min = (opts && opts.xMin != null) ? opts.xMin : undefined;
     sx.max = (opts && opts.xMax != null) ? opts.xMax : undefined;
+    if (opts && opts.xTime) Object.assign(sx.time, opts.xTime);
+    sx.ticks.maxTicksLimit = (opts && opts.xMaxTicks) || 8;
+    if (opts && opts.xTickValues) {
+      sx.afterBuildTicks = (s) => { s.ticks = opts.xTickValues.map(value => ({ value })); };
+    }
     sy.min = (opts && opts.yMin != null) ? opts.yMin : undefined;
     sy.max = (opts && opts.yMax != null) ? opts.yMax : undefined;
+    sy.ticks.maxTicksLimit = (opts && opts.yMaxTicks) || 6;
     _prev.options.plugins.nowLine = (opts && opts.nowX != null) ? { x: opts.nowX } : false;
     _prev.update('none');
     _chartHideSkeleton(id);
@@ -8531,4 +8589,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='f4b3b46647ab';
+;window.__BUILD__='bccd056e67c5';

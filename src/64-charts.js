@@ -333,8 +333,14 @@ function _makeChart(id, datasets, yFmt, hrs, opts) {
     const sx = _prev.options.scales.x, sy = _prev.options.scales.y;
     sx.min = (opts && opts.xMin != null) ? opts.xMin : undefined;
     sx.max = (opts && opts.xMax != null) ? opts.xMax : undefined;
+    if (opts && opts.xTime) Object.assign(sx.time, opts.xTime);
+    sx.ticks.maxTicksLimit = (opts && opts.xMaxTicks) || 8;
+    if (opts && opts.xTickValues) {
+      sx.afterBuildTicks = (s) => { s.ticks = opts.xTickValues.map(value => ({ value })); };
+    }
     sy.min = (opts && opts.yMin != null) ? opts.yMin : undefined;
     sy.max = (opts && opts.yMax != null) ? opts.yMax : undefined;
+    sy.ticks.maxTicksLimit = (opts && opts.yMaxTicks) || 6;
     _prev.options.plugins.nowLine = (opts && opts.nowX != null) ? { x: opts.nowX } : false;
     _prev.update('none');
     _chartHideSkeleton(id);
