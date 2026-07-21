@@ -5390,12 +5390,12 @@ function _ovRenderNodeCharts(D) {
       }
       return { labels: labels, avg: avg };
     };
-    // Lines stay transparent underneath so the canvas uses the exact same
-    // surface color as its widget; the rolling chart also skips the one-shot
-    // reveal because its clipped left edge can look like an unfinished load.
+    // Match the other history charts with a soft under-line gradient. The
+    // rolling chart still skips the one-shot reveal and its boundary-held
+    // startup sample spans the full window, so the fill never looks half-loaded.
     var datasets = [
-      _dsAvgOnly('CPU', bucket('cpu'), acc),
-      _dsAvgOnly('RAM', bucket('mem'), _OV_G)
+      _dsAvgOnly('CPU', bucket('cpu'), acc, { gradient: 'soft' }),
+      _dsAvgOnly('RAM', bucket('mem'), _OV_G, { gradient: 'soft' })
     ];
     _makeChart(_ovNodeChartId(n.node), datasets, function (v) { return Math.round(v) + '%'; }, _OV_PULSE_WINDOW_MS / 3600000, {
       legendTarget: _ovNodeLegendId(n.node), yMin: 0, yMax: 100, yMaxTicks: 3,
@@ -8630,4 +8630,4 @@ if(!window._gResizeWired){
   });
 }
 
-;window.__BUILD__='7219605f969d';
+;window.__BUILD__='963ba94200dd';
