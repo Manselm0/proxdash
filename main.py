@@ -3992,9 +3992,6 @@ body{
   box-shadow:var(--c-shadow);
 }
 .logo-wrap{
-  width:52px;height:52px;border-radius:10px;
-  background:rgba(var(--c-accent-rgb),.1);
-  border:1px solid rgba(var(--c-accent-rgb),.2);
   display:flex;align-items:center;justify-content:center;
   margin-bottom:20px;color:var(--c-accent);flex-shrink:0;
 }
