@@ -1,7 +1,7 @@
 # ProxDash — FastAPI homelab dashboard
 # Build:  docker build -t proxdash .
 # Run:    docker run -p 8080:8080 -v ./data:/data proxdash
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
