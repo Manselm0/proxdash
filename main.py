@@ -559,6 +559,11 @@ def _stream_authed(conn) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    hosts = request.headers.getlist("host")
+    if len(hosts) != 1 or not _re.fullmatch(
+        r"(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+(?:%[A-Za-z0-9._~-]+)?\])(?::[0-9]{1,5})?", hosts[0]
+    ):
+        return JSONResponse({"error": "invalid host header"}, status_code=400)
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
         try:
             content_length = int(request.headers.get("content-length") or 0)
@@ -568,7 +573,8 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"error": "request is too large"}, status_code=413)
     if not _auth_enabled():
         return await call_next(request)
-    path = request.url.path
+    # Use the same path as the router for authorization and CSRF decisions.
+    path = request.scope["path"]
     if (path.startswith("/auth/") or path.startswith("/static/")
             or path == "/ws" or path == "/favicon.svg" or path == "/favicon.ico"
             or (path == "/api/logo" and request.method == "GET")):  # login page + favicon need it
