@@ -3,3 +3,6 @@ uvicorn[standard]==0.54.0
 aiohttp==3.14.5
 pyyaml==6.0.3
 starlette==1.9.0
+# Transitive pins carrying security fixes
+anyio==4.14.2
+multidict==6.9.1
