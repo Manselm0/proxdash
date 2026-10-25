@@ -1,5 +1,9 @@
 # ProxDash
 
+> **Archived (2026-10-25).** ProxDash is no longer maintained and receives no security fixes.
+> The code stays available under the AGPL-3.0 license, but do not expose a deployment to the
+> internet without reviewing its dependencies first.
+
 **The real-time Proxmox dashboard** — a turnkey, live observability panel for your homelab.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
